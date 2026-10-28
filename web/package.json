@@ -15,7 +15,8 @@
     "benchmark": "node scripts/benchmark.js",
     "make-samples": "node scripts/make-samples.js",
     "db:migrate": "node scripts/migrate.js",
-    "db:import-sqlite": "node scripts/import-sqlite.js"
+    "db:import-sqlite": "node scripts/import-sqlite.js",
+    "test:db": "node --test tests/mysql.test.js"
   },
   "keywords": [
     "ocr",

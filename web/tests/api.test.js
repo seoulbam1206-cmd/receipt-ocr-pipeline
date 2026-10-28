@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import sharp from 'sharp';
 import { createApp } from '../src/app.js';
-import { createRepository } from '../src/db/repository.js';
+import { createMemoryRepository } from '../src/db/memoryRepository.js';
 import { createOcrService } from '../src/services/ocrService.js';
 import { FIXTURES } from './fixtures.js';
 
@@ -24,7 +24,7 @@ const fakeEngine = {
 
 before(async () => {
   uploadDir = await mkdtemp(path.join(os.tmpdir(), 'receipt-ocr-test-'));
-  repo = createRepository(':memory:');
+  repo = createMemoryRepository();
   const app = createApp({ repo, ocr: createOcrService(fakeEngine), uploadDir, now: () => NOW });
   server = app.listen(0);
   await new Promise((r) => server.once('listening', r));
@@ -34,7 +34,7 @@ before(async () => {
 
 after(async () => {
   server.close();
-  repo.close();
+  await repo.close();
   await rm(uploadDir, { recursive: true, force: true });
 });
 
