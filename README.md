@@ -132,7 +132,8 @@ ai-ocr-pipeline/
 cd web
 npm ci
 
-# tesseract.js 언어 파일 (약 6MB, 처음 한 번)
+# tesseract.js 언어 파일 (약 6MB, 처음 한 번). tessdata 폴더는 저장소에 없으니 먼저 만든다
+New-Item -ItemType Directory -Force tessdata | Out-Null
 Invoke-WebRequest -Uri https://github.com/tesseract-ocr/tessdata_fast/raw/main/kor.traineddata -OutFile tessdata\kor.traineddata
 Invoke-WebRequest -Uri https://github.com/tesseract-ocr/tessdata_fast/raw/main/eng.traineddata -OutFile tessdata\eng.traineddata
 
