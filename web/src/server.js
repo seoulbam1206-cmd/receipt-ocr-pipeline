@@ -22,7 +22,22 @@ if (missing.length) {
   );
 }
 
-const repo = createRepository(config.db.file);
+const repo = createRepository(config.db);
+try {
+  await repo.ping();
+  console.log(`[db] MySQL 연결 확인 (${config.db.host}:${config.db.port}/${config.db.database})`);
+} catch (err) {
+  // DB 없이는 저장·조회가 모두 안 되므로 기동하지 않는다
+  console.error(
+    [
+      `[db] MySQL 연결 실패: ${err.message}`,
+      '  1) web/.env 의 DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD 를 확인하세요 (예시: web/.env.example)',
+      '  2) 테이블이 없다는 오류면 npm run db:migrate 를 먼저 실행하세요',
+    ].join('\n'),
+  );
+  await repo.close().catch(() => {});
+  process.exit(1);
+}
 const ocr = createOcrService(createEngine());
 
 try {
@@ -49,7 +64,7 @@ async function shutdown(signal) {
   console.log(`[server] ${signal} 수신, 종료 중...`);
   server.close();
   await ocr.terminate().catch(() => {});
-  repo.close();
+  await repo.close().catch(() => {});
   process.exit(0);
 }
 process.on('SIGINT', () => shutdown('SIGINT'));

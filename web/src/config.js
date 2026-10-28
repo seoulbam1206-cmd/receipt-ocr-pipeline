@@ -28,7 +28,15 @@ export const config = {
     langPath: path.join(ROOT, 'tessdata'),
     confidenceThreshold: num(process.env.OCR_CONFIDENCE_THRESHOLD, 0.75),
   },
+  // MySQL 8.0 / TiDB. 값은 .env 에서 읽는다(web/.env.example 참고). 비밀번호 기본값은 없다
   db: {
-    file: process.env.DB_FILE || path.join(ROOT, 'data', 'receipts.db'),
+    host: process.env.DB_HOST || '127.0.0.1',
+    port: num(process.env.DB_PORT, 3306),
+    database: process.env.DB_NAME || 'ocr_pipeline',
+    user: process.env.DB_USER || '',
+    password: process.env.DB_PASSWORD || '',
+    ssl: process.env.DB_SSL === 'true', // TiDB Cloud는 true
+    timeZone: process.env.DB_TIMEZONE || '+09:00',
+    connectionLimit: num(process.env.DB_CONNECTION_LIMIT, 5),
   },
 };

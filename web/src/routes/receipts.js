@@ -92,7 +92,7 @@ export function createReceiptsRouter({ repo, ocr, uploadDir = config.upload.dir,
         }
         throw err;
       }
-      const saved = repo.insert(result);
+      const saved = await repo.insert(result);
       res.status(201).json({ data: publicView({ ...saved, valid: result.valid }) });
     } finally {
       // 원본 영수증은 처리 직후 삭제
@@ -100,36 +100,36 @@ export function createReceiptsRouter({ repo, ocr, uploadDir = config.upload.dir,
     }
   });
 
-  router.get('/', (req, res) => {
+  router.get('/', async (req, res) => {
     const filters = parse(listQuery, req.query);
-    res.json({ data: repo.list(filters).map(publicView) });
+    res.json({ data: (await repo.list(filters)).map(publicView) });
   });
 
-  router.get('/export.csv', (req, res) => {
+  router.get('/export.csv', async (req, res) => {
     const { from, to } = parse(exportQuery, req.query);
-    const csv = toExpenseCsv(repo.list({ from, to }).reverse());
+    const csv = toExpenseCsv((await repo.list({ from, to })).reverse());
     const name = `expense_${from ?? 'all'}_${to ?? 'all'}.csv`;
     res.set('Content-Type', 'text/csv; charset=utf-8');
     res.set('Content-Disposition', `attachment; filename="${name}"`);
     res.send(csv);
   });
 
-  const load = (req) => {
+  const load = async (req) => {
     const id = parse(idParam, req.params.id);
-    const rec = repo.getById(id);
+    const rec = await repo.getById(id);
     if (!rec) throw new ApiError(404, 'NOT_FOUND', `영수증 ${id}을(를) 찾을 수 없습니다`);
     return rec;
   };
 
-  router.get('/:id', (req, res) => {
-    res.json({ data: publicView(load(req)) });
+  router.get('/:id', async (req, res) => {
+    res.json({ data: publicView(await load(req)) });
   });
 
-  router.patch('/:id', (req, res) => {
-    const existing = load(req);
+  router.patch('/:id', async (req, res) => {
+    const existing = await load(req);
     const { confirm, ...changes } = parse(patchBody, req.body ?? {});
-    const update = revalidate(existing, changes, { repo, now: now(), confirm });
-    res.json({ data: publicView(repo.update(existing.id, update)) });
+    const update = await revalidate(existing, changes, { repo, now: now(), confirm });
+    res.json({ data: publicView(await repo.update(existing.id, update)) });
   });
 
   return router;

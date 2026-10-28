@@ -21,7 +21,7 @@ export async function analyzeReceipt(input, { ocr, repo, preprocess = true, now 
 
   const parsed = parseReceipt(text);
   const dupHash = computeDupHash(parsed);
-  const duplicate = repo ? repo.hasDupHash(dupHash) : false;
+  const duplicate = repo ? await repo.hasDupHash(dupHash) : false;
   const validation = validateReceipt(parsed, { ocrConfidence, now, duplicate });
 
   return {
@@ -41,10 +41,10 @@ export async function analyzeReceipt(input, { ocr, repo, preprocess = true, now 
  * 검토 화면에서 수정한 값을 반영해 재검증. 사람이 검토한 값이므로 OCR 신뢰도는 1로 본다.
  * confirm=true면 필수 필드가 있을 때 CONFIRMED로 확정한다.
  */
-export function revalidate(existing, changes, { repo, now, confirm = false } = {}) {
+export async function revalidate(existing, changes, { repo, now, confirm = false } = {}) {
   const merged = { ...existing, ...changes };
   const dupHash = computeDupHash(merged);
-  const duplicate = repo ? repo.hasDupHash(dupHash, existing.id) : false;
+  const duplicate = repo ? await repo.hasDupHash(dupHash, existing.id) : false;
   const validation = validateReceipt(merged, { ocrConfidence: 1, now, duplicate });
   const missing = validation.issues.some((i) => i.code === 'MISSING_FIELDS');
   return {
