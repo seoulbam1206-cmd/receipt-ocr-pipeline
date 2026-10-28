@@ -141,11 +141,19 @@ function extractBizNo(lines) {
   return null;
 }
 
-/** 줄에서 날짜/시간/번호류를 지운 뒤 양의 정수 금액 목록 */
-export function amountsInLine(line) {
+/** 금액 탐색 전에 날짜/시간/전화/사업자/카드번호를 지운다 */
+function stripNonAmounts(line) {
   let s = line.replace(DATE_RE, ' ').replace(PHONE_RE, ' ').replace(BIZ_RE, ' ');
   for (const re of CARD_PATTERNS) s = s.replace(re, ' ');
-  s = s.replace(new RegExp(TIME_RE.source, 'gi'), ' ');
+  return s.replace(new RegExp(TIME_RE.source, 'gi'), ' ');
+}
+
+/** 숫자 사이에 마침표가 낀 금액(22.5002 등 쉼표 오인식). 끝의 .0 / .00 은 정상으로 본다 */
+const MALFORMED_AMOUNT = /\d\.(?!0{1,2}(?!\d))\d/;
+
+/** 줄에서 날짜/시간/번호류를 지운 뒤 양의 정수 금액 목록 */
+export function amountsInLine(line) {
+  const s = stripNonAmounts(line);
   const out = [];
   for (const m of s.matchAll(AMOUNT_RE)) {
     if (m[1]) continue; // 음수(할인 등)
@@ -155,18 +163,26 @@ export function amountsInLine(line) {
   return out;
 }
 
-/** 키워드 줄의 금액(없으면 다음 줄). 같은 줄 여러 개면 가장 큰 값 */
-function amountAt(lines, i) {
+/** 키워드 줄의 금액(없으면 다음 줄). 같은 줄 여러 개면 가장 큰 값. line: 금액을 읽은 줄 */
+function amountWithLine(lines, i) {
   const own = amountsInLine(lines[i]);
-  if (own.length) return Math.max(...own);
+  if (own.length) return { amount: Math.max(...own), line: lines[i] };
   const next = lines[i + 1];
   if (next && /^[\s\d,원₩\\]+$/.test(next)) {
     const a = amountsInLine(next);
-    if (a.length) return Math.max(...a);
+    if (a.length) return { amount: Math.max(...a), line: next };
   }
   return null;
 }
 
+const amountAt = (lines, i) => amountWithLine(lines, i)?.amount ?? null;
+
+/**
+ * 합계와 그 근거. source:
+ *  keyword   합계 키워드 줄에서 읽음
+ *  malformed 키워드 줄이지만 금액 형식이 깨져 있음(22.5002 등)
+ *  fallback  키워드가 없어 가장 큰 금액으로 추정
+ */
 function extractTotal(lines) {
   const candidates = [];
   lines.forEach((line, i) => {
@@ -174,16 +190,17 @@ function extractTotal(lines) {
     if (TOTAL_EXCLUDE.test(compact)) return;
     const kw = TOTAL_KEYWORDS.find((k) => k.re.test(compact));
     if (!kw) return;
-    const amount = amountAt(lines, i);
-    if (amount !== null) candidates.push({ amount, rank: kw.rank });
+    const found = amountWithLine(lines, i);
+    if (found) candidates.push({ ...found, rank: kw.rank });
   });
   if (candidates.length) {
     const best = Math.min(...candidates.map((c) => c.rank));
-    return Math.max(...candidates.filter((c) => c.rank === best).map((c) => c.amount));
+    const pick = candidates.filter((c) => c.rank === best).reduce((a, b) => (b.amount > a.amount ? b : a));
+    return { amount: pick.amount, source: MALFORMED_AMOUNT.test(stripNonAmounts(pick.line)) ? 'malformed' : 'keyword' };
   }
   // 키워드가 없으면 번호류 줄을 제외한 가장 큰 금액
   const all = lines.filter((l) => !NON_AMOUNT_LINE.test(l)).flatMap(amountsInLine);
-  return all.length ? Math.max(...all) : null;
+  return all.length ? { amount: Math.max(...all), source: 'fallback' } : null;
 }
 
 function extractByKeyword(lines, keywordRe, excludeRe) {
@@ -241,6 +258,7 @@ const EMPTY = Object.freeze({
   supplyAmount: null,
   vat: null,
   totalAmount: null,
+  totalSource: null, // keyword | malformed | fallback (extractTotal 참고)
   paymentMethod: null,
   cardLast4: null,
   rawText: '',
@@ -271,7 +289,9 @@ export function parseReceipt(text) {
   result.bizNo = safe(() => extractBizNo(lines));
   result.date = safe(() => extractDate(lines));
   result.time = safe(() => extractTime(lines));
-  result.totalAmount = safe(() => extractTotal(lines));
+  const total = safe(() => extractTotal(lines));
+  result.totalAmount = total?.amount ?? null;
+  result.totalSource = total?.source ?? null;
   result.supplyAmount = safe(() => extractByKeyword(lines, SUPPLY_KEYWORDS, /면세/));
   result.vat = safe(() => extractByKeyword(lines, VAT_KEYWORDS, /(공급가|포함|과세물품)/));
   result.paymentMethod = safe(() => extractPaymentMethod(lines, result.cardLast4));

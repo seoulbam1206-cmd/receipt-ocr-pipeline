@@ -5,6 +5,11 @@ const BIZ_WEIGHTS = [1, 3, 7, 1, 3, 7, 1, 3, 5];
 // confidence = OCR 신뢰도 * w + 검증 통과율 * (1 - w)
 export const OCR_WEIGHT = 0.4;
 export const STATUS = Object.freeze({ CONFIRMED: 'CONFIRMED', REVIEW_REQUIRED: 'REVIEW_REQUIRED' });
+// parser의 totalSource 중 검토가 필요한 값
+const TOTAL_UNCERTAIN_MESSAGES = {
+  malformed: '합계 줄의 금액 형식이 깨져 있음(OCR 오인식 가능)',
+  fallback: '합계 키워드를 찾지 못해 가장 큰 금액으로 추정함',
+};
 
 /** 사업자등록번호 체크섬 (가중치 1,3,7,1,3,7,1,3,5) */
 export function isValidBizNo(bizNo) {
@@ -75,12 +80,19 @@ export function validateReceipt(r, opts = {}) {
 
   if (duplicate) issues.push({ code: 'DUPLICATE', message: '동일 가맹점·일자·합계의 영수증이 이미 등록됨' });
 
+  // (e) 합계 근거. 공급가액/부가세가 없으면 (a)를 건너뛰므로, 근거가 약한 합계는 그대로 확정되지 않게 한다.
+  // totalSource는 파서 결과에만 있다(사람이 수정한 값은 DB에서 읽어 와 없음)
+  const totalUncertain = r.totalAmount != null && TOTAL_UNCERTAIN_MESSAGES[r.totalSource];
+  if (totalUncertain) issues.push({ code: 'TOTAL_UNCERTAIN', message: totalUncertain });
+
   const passRate = evaluated ? passed / evaluated : 0;
   const ocr = Math.max(0, Math.min(1, Number(ocrConfidence) || 0));
   const confidence = Math.round((ocr * OCR_WEIGHT + passRate * (1 - OCR_WEIGHT)) * 1000) / 1000;
-  // 임계값 미만은 검토 필요. 필수 필드 누락·중복은 신뢰도와 무관하게 검토 필요
+  // 임계값 미만은 검토 필요. 필수 필드 누락·중복·불확실한 합계는 신뢰도와 무관하게 검토 필요
   const status =
-    confidence < threshold || missing.length > 0 || duplicate ? STATUS.REVIEW_REQUIRED : STATUS.CONFIRMED;
+    confidence < threshold || missing.length > 0 || duplicate || totalUncertain
+      ? STATUS.REVIEW_REQUIRED
+      : STATUS.CONFIRMED;
 
   return { valid: issues.length === 0, issues, confidence, status, duplicate };
 }

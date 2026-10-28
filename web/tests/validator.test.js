@@ -86,3 +86,16 @@ test('categorizer: fixture별 계정과목', () => {
   }
   assert.equal(categorize({}), '기타');
 });
+
+test('합계 근거가 약하면(malformed·fallback) 신뢰도와 무관하게 REVIEW_REQUIRED', () => {
+  for (const totalSource of ['malformed', 'fallback']) {
+    const res = validateReceipt({ ...base(), supplyAmount: null, vat: null, totalSource }, { ocrConfidence: 0.95, now: NOW });
+    assert.ok(codes(res).includes('TOTAL_UNCERTAIN'), totalSource);
+    assert.equal(res.status, STATUS.REVIEW_REQUIRED, totalSource);
+  }
+  const ok = validateReceipt({ ...base(), totalSource: 'keyword' }, { ocrConfidence: 0.95, now: NOW });
+  assert.equal(ok.status, STATUS.CONFIRMED);
+  // 합계가 없으면 MISSING_FIELDS로만 잡는다
+  const none = validateReceipt({ ...base(), totalAmount: null, totalSource: null }, { ocrConfidence: 0.95, now: NOW });
+  assert.ok(!codes(none).includes('TOTAL_UNCERTAIN'));
+});

@@ -83,7 +83,8 @@ flowchart LR
 | 사업자번호 | 가중치 `1,3,7,1,3,7,1,3,5` 체크섬 |
 | 날짜 | 미래 날짜 불가, 5년 이내 |
 | 신뢰도 | `confidence = OCR 신뢰도 × 0.4 + 검증 통과율 × 0.6` |
-| 상태 | `confidence < 0.75`, 필수 필드(가맹점·일자·합계) 누락, 중복 중 하나면 `REVIEW_REQUIRED`, 아니면 `CONFIRMED` |
+| 합계 근거 | 합계 키워드를 못 찾아 가장 큰 금액으로 추정했거나, 키워드 줄의 금액 형식이 깨져 있으면(`22.5002` 등) `TOTAL_UNCERTAIN` |
+| 상태 | `confidence < 0.75`, 필수 필드(가맹점·일자·합계) 누락, 중복, `TOTAL_UNCERTAIN` 중 하나면 `REVIEW_REQUIRED`, 아니면 `CONFIRMED` |
 | 중복 | `sha256(공백 제거·소문자 가맹점 \| 일자 \| 합계)`가 DB에 이미 있으면 `duplicate=true` |
 | 계정과목 | `식대 · 교통비 · 사무용품 · 접대비 · 통신비 · 기타`. 키워드는 [categorizer.js](web/src/services/categorizer.js) 상단 사전에서 수정 |
 
@@ -98,7 +99,7 @@ flowchart LR
 |---|---|
 | web | Node.js 22+, Express 5, multer, zod 4, sharp, tesseract.js 7, better-sqlite3, dotenv |
 | ocr-service | Python 3.12, FastAPI, uvicorn, PaddleOCR 3.7 (PP-OCRv5 mobile det + korean rec), paddlepaddle 3.3 (CPU), OpenCV, psutil |
-| 테스트 | `node:test` (단위·API 42개), pytest (9개) |
+| 테스트 | `node:test` (단위·API 46개), pytest (9개) |
 | 프론트엔드 | 단일 HTML + vanilla JS (빌드 없음) |
 
 ```
@@ -241,7 +242,7 @@ CSV 내보내기(`GET /api/receipts/export.csv`):
 | `GET` | `/api/health` | 상태 및 OCR 대기 건수 |
 
 에러 코드: `FILE_REQUIRED`(400), `INVALID_FILE_TYPE`(400), `FILE_TOO_LARGE`(413), `INVALID_IMAGE`(422), `VALIDATION_ERROR`(400), `NOT_FOUND`(404), `INTERNAL_ERROR`(500)
-검증 이슈 코드: `MISSING_FIELDS`, `AMOUNT_MISMATCH`, `INVALID_BIZ_NO`, `FUTURE_DATE`, `DATE_TOO_OLD`, `DUPLICATE`
+검증 이슈 코드: `MISSING_FIELDS`, `AMOUNT_MISMATCH`, `INVALID_BIZ_NO`, `FUTURE_DATE`, `DATE_TOO_OLD`, `DUPLICATE`, `TOTAL_UNCERTAIN`
 
 ocr-service: `GET /health` → `{ ok, engine, peakRssMb }`, `POST /ocr`(multipart `image`) → `{ text, confidence, lines: [{ text, confidence, bbox }] }`
 
@@ -265,6 +266,7 @@ npm run benchmark -- --engine paddle --no-preprocess
 | PaddleOCR | OFF | 5/5 | 5/5 | 5/5 | 3,825ms | ocr-service 477MB + web 62MB |
 
 - tesseract.js는 합계 2건을 틀렸습니다. 할인 후 결제금액 22,500원 영수증을 `22`로, 거스름돈이 있는 편의점 영수증(총액 3,500원)을 `50001`로 추출했습니다.
+  - 처음에는 이 2건이 신뢰도 0.94로 `CONFIRMED`가 됐습니다. 공급가액·부가세가 없는 영수증은 합계식 검증을 건너뛰기 때문입니다. 원인은 각각 `결제금액 = 22.5002)`(쉼표가 마침표로 깨짐)와 `총액`→`종액` 오인식(키워드 없음 → 가장 큰 숫자인 `500ml`→`50001` 선택)이었습니다. 합계 근거 검사(`TOTAL_UNCERTAIN`)를 추가해 지금은 두 건 모두 `REVIEW_REQUIRED`로 분류됩니다. 정답 3건과 PaddleOCR 5건은 그대로 `CONFIRMED`입니다.
 - PaddleOCR는 정확하지만 CPU에서 건당 4~5초가 걸리고, 두 프로세스를 합쳐 tesseract.js보다 메모리를 4배 이상 씁니다. 그래서 기본값은 tesseract.js로 두고 PaddleOCR는 선택 사항으로 했습니다.
 - PaddleOCR 연동 초기에는 일자 정확도가 3/5였습니다. 한 박스 안의 공백이 빠져 `2026-10-2712:34:56`처럼 날짜와 시간이 붙어 나왔기 때문입니다. 파서에 날짜·시간 분리 규칙(`splitDateTime`)을 추가해 5/5가 됐습니다.
 - **한계**: 합성 이미지 5장이라 실제 영수증 사진(구김, 그림자, 감열지 변색) 성능을 대표하지 않습니다.
@@ -272,7 +274,7 @@ npm run benchmark -- --engine paddle --no-preprocess
 ## 8. 테스트
 
 ```powershell
-cd web; npm test                                  # 42개: 파서 fixture 9종, 검증, 전처리, OCR 큐/HTTP 어댑터, API
+cd web; npm test                                  # 46개: 파서 fixture 9종, 검증, 전처리, OCR 큐/HTTP 어댑터, API
 cd ocr-service; .venv\Scripts\python -m pytest    # 9개: 줄 복원 로직, API (가짜 엔진)
 ```
 

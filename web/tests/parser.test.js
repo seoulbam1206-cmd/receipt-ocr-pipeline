@@ -68,3 +68,21 @@ test('splitDateTime: 공백 없이 붙은 날짜·시간 분리', () => {
   assert.equal(r.date, '2026-10-27');
   assert.equal(r.time, '12:34:56');
 });
+
+test('totalSource: 키워드 줄이면 keyword', () => {
+  assert.equal(parseReceipt('합계 14,000').totalSource, 'keyword');
+  assert.equal(parseReceipt('합계 14,000.00').totalSource, 'keyword'); // 끝의 .00은 정상
+  assert.equal(parseReceipt('가상가게').totalSource, null);
+});
+
+test('totalSource: 쉼표가 마침표로 깨진 결제금액은 malformed (tesseract 실제 출력, receipt02)', () => {
+  const r = parseReceipt('합계       24,500\n할인       -2,000\n결제금액 = 22.5002)');
+  assert.equal(r.totalAmount, 22);
+  assert.equal(r.totalSource, 'malformed');
+});
+
+test('totalSource: 총액을 종액으로 읽어 키워드가 없으면 fallback (tesseract 실제 출력, receipt05)', () => {
+  const r = parseReceipt('생수 50001 2 2,000\n삼각김밥 _ 1 1,500\n종액          3,500\n현금          5,000');
+  assert.equal(r.totalAmount, 50001);
+  assert.equal(r.totalSource, 'fallback');
+});
