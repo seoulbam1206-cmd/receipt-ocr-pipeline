@@ -13,6 +13,26 @@
 
 > 측정 조건과 한계는 [벤치마크](#7-벤치마크)를 참고하세요. 샘플이 5장뿐이라 일반적인 인식률을 나타내는 수치는 아닙니다.
 
+## 구현 현황
+
+✅ 구현됨 · 🗓 예정 (예정 항목은 아직 코드가 없습니다)
+
+| 영역 | 기능 | 상태 |
+|---|---|---|
+| 입력 | 영수증 이미지 업로드 (jpg/png/webp, 5MB) | ✅ |
+| 입력 | 지출결의서 문서 OCR (입력 문서로 읽기) | 🗓 |
+| OCR | tesseract.js (Node 단독 실행) / PaddleOCR (Python 서비스) 전환 | ✅ |
+| 처리 | 전처리 → 필드 추출 → 검증 → 계정과목 분류 | ✅ |
+| 처리 | 확신 없는 건만 `REVIEW_REQUIRED`로 분류 (신뢰도·필수 필드·중복·합계 근거) | ✅ |
+| 처리 | 문서 종류별 처리 구조 (영수증 / 지출결의서 / 세금계산서) | 🗓 |
+| 처리 | 표 형태 문서의 품목·수량·금액 열 복원 | 🗓 |
+| 출력 | 검토 화면, 수정 후 재검증, SQLite 저장 | ✅ |
+| 출력 | 지출결의서용 CSV 내보내기 | ✅ |
+| 출력 | 지출결의서 xlsx 양식 직접 출력 | 🗓 |
+| 품질 | 단위·API 테스트 (Node 46개, Python 9개), 가상 샘플 벤치마크 | ✅ |
+| 운영 | Docker / docker compose, CI (GitHub Actions) | 🗓 |
+| 운영 | 인증·다중 사용자 | 🗓 |
+
 ## 1. 문제 정의
 
 총무·경리 담당자는 매달 수십~수백 장의 종이/사진 영수증을 손으로 옮겨 적어 지출결의서를 만듭니다.
@@ -173,6 +193,7 @@ $env:OCR_ENGINE='paddle'; npm start
 | `PORT` | `3000` | 포트 |
 | `OCR_ENGINE` | `tesseract` | `tesseract` \| `paddle` |
 | `OCR_SERVICE_URL` | `http://127.0.0.1:8000` | ocr-service 주소 |
+| `OCR_SERVICE_TIMEOUT_MS` | `60000` | ocr-service 요청 제한 시간(ms) |
 | `OCR_CONFIDENCE_THRESHOLD` | `0.75` | 검토 필요 판정 임계값 |
 | `OCR_THRESHOLD` | (off) | `on`이면 전처리에 이진화 적용 |
 | `DB_FILE` | `web/data/receipts.db` | SQLite 경로 |

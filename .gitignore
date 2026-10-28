@@ -10,8 +10,16 @@ web/uploads/
 web/tessdata/*.traineddata
 npm-debug.log*
 
+# SQLite (DB_FILE을 다른 경로로 지정해도 커밋되지 않게)
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+
 # ocr-service (Python)
 ocr-service/.venv/
+.venv/
+venv/
 ocr-service/.paddlex/
 __pycache__/
 *.py[cod]
