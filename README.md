@@ -1,5 +1,19 @@
 # AI OCR Pipeline — 영수증 자동 입력·검증
 
+<table>
+  <tr>
+    <td valign="top"><img src="docs/screenshots/desktop.png" alt="PC 화면: 원본 영수증과 추출 결과를 나란히 보여 주는 데모" width="640"></td>
+    <td valign="top"><img src="docs/screenshots/mobile.png" alt="모바일 화면: 결과가 세로로 쌓이고 처리 내역이 카드로 바뀜" width="200"></td>
+  </tr>
+  <tr>
+    <td align="center">PC (1280px) · 카페 샘플 → 확정</td>
+    <td align="center">모바일 (390px) · 편의점 샘플 → 검토 필요</td>
+  </tr>
+</table>
+
+- 중복 감지: 같은 영수증(가맹점·일자·합계가 같음)을 다시 올리면 `DUPLICATE` 이슈와 함께 `REVIEW_REQUIRED`로 분류됩니다.
+- 샘플 이미지는 `samples/`(원본, 벤치마크용)와 `web/public/samples/`(데모 화면의 "샘플로 바로 테스트"용 복사본) 두 곳에 있습니다. `npm run make-samples`로 다시 만들면 `web/public/samples/`에도 복사해 주세요.
+
 영수증 이미지를 올리면 **전처리 → OCR → 필드 추출 → 검증 → 계정과목 분류 → 저장**까지 자동으로 처리하고, 확신이 없는 건만 `REVIEW_REQUIRED`로 골라 사람이 검토한 뒤 지출결의서용 CSV로 내보냅니다.
 
 - **web** (Node.js / Express): 업로드 API, 파싱·검증 파이프라인, MySQL 저장, 검토 화면, CSV 내보내기
