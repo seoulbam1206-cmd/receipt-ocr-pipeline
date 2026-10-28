@@ -2,7 +2,7 @@
 
 영수증 이미지를 올리면 **전처리 → OCR → 필드 추출 → 검증 → 계정과목 분류 → 저장**까지 자동으로 처리하고, 확신이 없는 건만 `REVIEW_REQUIRED`로 골라 사람이 검토한 뒤 지출결의서용 CSV로 내보냅니다.
 
-- **web** (Node.js / Express): 업로드 API, 파싱·검증 파이프라인, SQLite 저장, 검토 화면, CSV 내보내기
+- **web** (Node.js / Express): 업로드 API, 파싱·검증 파이프라인, MySQL 저장, 검토 화면, CSV 내보내기
 - **ocr-service** (Python / FastAPI): PaddleOCR 기반 OCR 엔진 서비스
 - OCR 엔진은 환경 변수 하나(`OCR_ENGINE`)로 바꿀 수 있습니다. Python 없이 Node만으로도 실행됩니다(tesseract.js).
 
@@ -26,10 +26,12 @@
 | 처리 | 확신 없는 건만 `REVIEW_REQUIRED`로 분류 (신뢰도·필수 필드·중복·합계 근거) | ✅ |
 | 처리 | 문서 종류별 처리 구조 (영수증 / 지출결의서 / 세금계산서) | 🗓 |
 | 처리 | 표 형태 문서의 품목·수량·금액 열 복원 | 🗓 |
-| 출력 | 검토 화면, 수정 후 재검증, SQLite 저장 | ✅ |
+| 출력 | 검토 화면, 수정 후 재검증 | ✅ |
+| 저장 | MySQL 8.0 `documents` 테이블 (`doc_type` + `fields_json`), 마이그레이션 스크립트, 예전 SQLite 데이터 이전 | ✅ |
+| 저장 | TiDB Cloud(무료) 전환: 환경 변수만 바꾸도록 구성 (호환 문법·TLS 옵션). 실제 TiDB 연결은 아직 검증 안 함 | 🗓 |
 | 출력 | 지출결의서용 CSV 내보내기 | ✅ |
 | 출력 | 지출결의서 xlsx 양식 직접 출력 | 🗓 |
-| 품질 | 단위·API 테스트 (Node 46개, Python 9개), 가상 샘플 벤치마크 | ✅ |
+| 품질 | 단위·API 테스트 (Node 49개 + MySQL 연결 테스트, Python 9개), 가상 샘플 벤치마크 | ✅ |
 | 운영 | Docker / docker compose, CI (GitHub Actions) | 🗓 |
 | 운영 | 인증·다중 사용자 | 🗓 |
 
@@ -60,7 +62,7 @@ flowchart LR
         H --> P3
         P3 --> P4[④ 검증<br/>합계식·체크섬·날짜·중복]
         P4 --> P5[⑤ 계정과목 분류<br/>키워드 사전]
-        P5 --> DB[(SQLite)]
+        P5 --> DB[(MySQL 8.0<br/>documents)]
         DB --> CSV[CSV 내보내기]
     end
 
@@ -81,7 +83,7 @@ flowchart LR
 | ③ 파싱 | [web/src/services/parser.js](web/src/services/parser.js) | O→0, l/I→1, S→5 보정, 날짜·시간 붙음 분리, 가맹점·사업자번호·일자·금액·결제수단 추출, 카드번호 마스킹 |
 | ④ 검증 | [web/src/services/validator.js](web/src/services/validator.js) | 합계식, 사업자번호 체크섬, 날짜 범위, 필수 필드, 중복 → 신뢰도·상태 |
 | ⑤ 분류 | [web/src/services/categorizer.js](web/src/services/categorizer.js) | 가맹점명·본문 키워드 점수로 계정과목 결정 |
-| 저장/출력 | [web/src/db/repository.js](web/src/db/repository.js), [exporter.js](web/src/services/exporter.js) | SQLite 저장, 검토 후 수정(PATCH), CSV(UTF-8 BOM) |
+| 저장/출력 | [web/src/db/repository.js](web/src/db/repository.js), [exporter.js](web/src/services/exporter.js) | MySQL 저장(mysql2 풀), 검토 후 수정(PATCH), CSV(UTF-8 BOM) |
 
 ### 왜 Python 서비스를 분리했나
 
@@ -92,7 +94,7 @@ flowchart LR
 ### 확장 구조 (실제 구현 범위)
 
 - **OCR 엔진**: `OcrEngine` 인터페이스(`init / recognize / terminate`)와 어댑터 2개(`createTesseractEngine`, `createHttpEngine`)가 구현되어 있고, `createEngine(name)`이 환경 변수로 하나를 고릅니다. 새 엔진(예: 클라우드 OCR)은 어댑터 하나를 추가하면 됩니다.
-- **문서 종류**: 현재는 **영수증 한 종류**만 처리합니다. 문서 종류별로 파서·검증 규칙을 바꾸는 구조는 아직 없습니다([로드맵](#9-한계와-로드맵) 참고).
+- **문서 종류**: 현재는 **영수증 한 종류**만 처리합니다. 문서 종류별로 파서·검증 규칙을 바꾸는 구조는 아직 없습니다([로드맵](#9-한계와-로드맵) 참고). 저장 쪽은 먼저 준비해 두었습니다: `documents` 테이블은 `doc_type`으로 문서 종류를 나누고, 종류별 필드는 `fields_json`(JSON)에 둡니다. 목록 필터에 쓰는 일자·계정과목만 일반 열(`doc_date`, `category`)로 뺐습니다.
 
 ## 3. 영수증 처리 규칙
 
@@ -117,9 +119,10 @@ flowchart LR
 
 | 영역 | 사용 기술 |
 |---|---|
-| web | Node.js 22+, Express 5, multer, zod 4, sharp, tesseract.js 7, better-sqlite3, dotenv |
+| web | Node.js 22+, Express 5, multer, zod 4, sharp, tesseract.js 7, mysql2, dotenv |
+| DB | MySQL 8.0 (TiDB Cloud 호환 문법). better-sqlite3는 예전 데이터 이전 스크립트에서만 사용(devDependency) |
 | ocr-service | Python 3.12, FastAPI, uvicorn, PaddleOCR 3.7 (PP-OCRv5 mobile det + korean rec), paddlepaddle 3.3 (CPU), OpenCV, psutil |
-| 테스트 | `node:test` (단위·API 46개), pytest (9개) |
+| 테스트 | `node:test` (단위·API 49개, MySQL 연결 6개), pytest (9개) |
 | 프론트엔드 | 단일 HTML + vanilla JS (빌드 없음) |
 
 ```
@@ -131,9 +134,10 @@ ai-ocr-pipeline/
 │  │  ├─ config.js         환경 변수
 │  │  ├─ routes/           REST API
 │  │  ├─ services/         preprocess · ocrService · parser · validator · categorizer · exporter · pipeline
-│  │  └─ db/               SQLite repository
+│  │  └─ db/               repository(MySQL) · memoryRepository(테스트용)
+│  ├─ db/migrations/       테이블 생성 SQL
 │  ├─ public/index.html    검토 화면
-│  ├─ scripts/             benchmark.js, make-samples.js
+│  ├─ scripts/             migrate.js, import-sqlite.js, benchmark.js, make-samples.js
 │  └─ tests/
 ├─ ocr-service/            Python OCR 서비스
 │  ├─ app/                 main.py(FastAPI) · engine.py(PaddleOCR) · layout.py(줄 복원) · config.py
@@ -143,11 +147,21 @@ ai-ocr-pipeline/
 
 ## 5. 설치 및 실행 (Windows / PowerShell)
 
-필요 환경: **Node.js 22 이상**, (PaddleOCR 사용 시) **Python 3.12**
+필요 환경: **Node.js 22 이상**, **MySQL 8.0**, (PaddleOCR 사용 시) **Python 3.12**
 
 > **주의**: 저장소를 **한글 등 비ASCII 문자가 없는 경로**에 두세요(예: `D:\projects\ai-ocr-pipeline`). PaddleOCR의 C++ 추론기는 비ASCII 경로의 모델 파일을 열지 못합니다. 모델 캐시는 사용자 폴더 대신 `ocr-service\.paddlex`에 저장하도록 되어 있어서 Windows 사용자명이 한글이어도 괜찮습니다.
 
-### 5-1. web (Node.js) — 이것만으로도 실행됩니다
+### 5-0. MySQL 준비
+
+이 프로젝트 전용 DB와 계정을 하나 만들고, 그 DB에만 권한을 줍니다(MySQL 관리자 계정으로 실행).
+
+```sql
+CREATE DATABASE ocr_pipeline CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER 'ocr_user'@'%' IDENTIFIED BY '<비밀번호>';
+GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX ON ocr_pipeline.* TO 'ocr_user'@'%';
+```
+
+### 5-1. web (Node.js) — Python 없이도 실행됩니다
 
 ```powershell
 cd web
@@ -158,12 +172,23 @@ New-Item -ItemType Directory -Force tessdata | Out-Null
 Invoke-WebRequest -Uri https://github.com/tesseract-ocr/tessdata_fast/raw/main/kor.traineddata -OutFile tessdata\kor.traineddata
 Invoke-WebRequest -Uri https://github.com/tesseract-ocr/tessdata_fast/raw/main/eng.traineddata -OutFile tessdata\eng.traineddata
 
-copy .env.example .env   # 선택. 기본값으로도 동작
+copy .env.example .env   # DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD 를 채운다
+npm run db:migrate       # documents 테이블 생성 (처음 한 번, 여러 번 실행해도 안전)
 npm start                # http://localhost:3000
 ```
 
-- `web/.npmrc`에 `ignore-scripts=true`가 들어 있습니다. better-sqlite3는 Windows용 바이너리를 패키지에 포함하는데, npm 11이 소스 빌드(node-gyp)를 시도해 Visual Studio가 없는 PC에서 설치가 실패하기 때문입니다.
-- `npm run dev`(자동 재시작), `npm test`, `npm run benchmark`, `npm run make-samples`
+- DB에 연결하지 못하면 서버는 이유와 확인할 항목을 출력하고 종료합니다.
+- `web/.npmrc`에 `ignore-scripts=true`가 들어 있습니다. better-sqlite3(데이터 이전용 개발 의존성)는 Windows용 바이너리를 패키지에 포함하는데, npm 11이 소스 빌드(node-gyp)를 시도해 Visual Studio가 없는 PC에서 설치가 실패하기 때문입니다.
+- `npm run dev`(자동 재시작), `npm test`, `npm run test:db`, `npm run benchmark`, `npm run make-samples`
+
+**예전 SQLite 데이터 옮기기** (SQLite를 쓰던 버전에서 업그레이드할 때만)
+
+```powershell
+npm run db:import-sqlite                       # 기본: web/data/receipts.db
+npm run db:import-sqlite -- D:\backup\old.db   # 다른 파일
+```
+
+SQLite 파일은 읽기만 하고 지우지 않습니다. 한 트랜잭션으로 넣고, 이미 옮긴 행(종류·생성 시각·원문이 같은 행)은 건너뛰므로 다시 실행해도 됩니다.
 
 ### 5-2. ocr-service (Python, PaddleOCR) — 선택
 
@@ -196,9 +221,30 @@ $env:OCR_ENGINE='paddle'; npm start
 | `OCR_SERVICE_TIMEOUT_MS` | `60000` | ocr-service 요청 제한 시간(ms) |
 | `OCR_CONFIDENCE_THRESHOLD` | `0.75` | 검토 필요 판정 임계값 |
 | `OCR_THRESHOLD` | (off) | `on`이면 전처리에 이진화 적용 |
-| `DB_FILE` | `web/data/receipts.db` | SQLite 경로 |
+| `DB_HOST` | `127.0.0.1` | MySQL 주소 |
+| `DB_PORT` | `3306` | MySQL 포트 (`.env.example`은 3307) |
+| `DB_NAME` | `ocr_pipeline` | 사용할 DB. 이 DB 하나만 사용합니다 |
+| `DB_USER` / `DB_PASSWORD` | (없음) | 계정. 비밀번호는 `.env`에만 씁니다 |
+| `DB_SSL` | `false` | 암호화 연결(TLS 1.2+, 인증서 검증). TiDB Cloud는 `true` |
+| `DB_TIMEZONE` | `+09:00` | 세션 시간대 (`created_at` 기준) |
+| `DB_CONNECTION_LIMIT` | `5` | 커넥션 풀 크기 |
 
 ocr-service 변수는 [ocr-service/.env.example](ocr-service/.env.example)에 있습니다.
+
+### 5-4. 클라우드 DB(TiDB Cloud 무료)로 옮기기
+
+코드는 MySQL 8.0과 TiDB에서 모두 되는 문법만 씁니다(트리거·프로시저·외래키 없음). `web\.env`의 값만 바꾸면 됩니다.
+
+```
+DB_HOST=gateway01.<region>.prod.aws.tidbcloud.com
+DB_PORT=4000
+DB_USER=<prefix>.root
+DB_PASSWORD=<비밀번호>
+DB_NAME=ocr_pipeline
+DB_SSL=true
+```
+
+그다음 `npm run db:migrate`로 테이블을 만듭니다. 값은 TiDB Cloud 콘솔의 Connect 화면에 나옵니다. TiDB Cloud는 암호화 연결이 필수라 `DB_SSL=true`가 필요합니다. 아직 실제 TiDB Cloud 연결은 검증하지 않았습니다.
 
 ## 6. 입출력 예시
 
@@ -295,7 +341,8 @@ npm run benchmark -- --engine paddle --no-preprocess
 ## 8. 테스트
 
 ```powershell
-cd web; npm test                                  # 46개: 파서 fixture 9종, 검증, 전처리, OCR 큐/HTTP 어댑터, API
+cd web; npm test                                  # 49개: 파서 fixture 9종, 검증, 전처리, OCR 큐/HTTP 어댑터, API, DB 행 변환 (MySQL 불필요)
+cd web; npm run test:db                           # MySQL 연결 6개: web/.env 의 DB 사용, 자기가 만든 행만 지움 (db:migrate 먼저)
 cd ocr-service; .venv\Scripts\python -m pytest    # 9개: 줄 복원 로직, API (가짜 엔진)
 ```
 
