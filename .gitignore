@@ -1,0 +1,28 @@
+# 비밀 값
+.env
+.env.*
+!.env.example
+
+# web (Node.js)
+web/node_modules/
+web/data/
+web/uploads/
+web/tessdata/*.traineddata
+npm-debug.log*
+
+# ocr-service (Python)
+ocr-service/.venv/
+ocr-service/.paddlex/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# 로그 / OS / 에디터
+*.log
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# samples/ 는 가상 데이터만 두고 커밋한다. 실제 영수증은 여기에 두지 말 것
+samples/private/
