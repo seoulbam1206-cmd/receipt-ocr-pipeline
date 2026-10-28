@@ -56,7 +56,7 @@ test('maskCardNumbers', () => {
   assert.equal(maskCardNumbers('1234-5678-9012-3456'), '****-****-****-3456');
   assert.equal(maskCardNumbers('1234567890123456'), '************3456');
   assert.equal(maskCardNumbers('사업자 999-99-99997'), '사업자 999-99-99997');
-  assert.equal(maskCardNumbers('TEL 010-1234-5678'), 'TEL 010-1234-5678');
+  assert.equal(maskCardNumbers('TEL 010-0000-0000'), 'TEL 010-0000-0000');
 });
 
 test('splitDateTime: 공백 없이 붙은 날짜·시간 분리', () => {
