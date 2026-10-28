@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>영수증 검토</title>
+<style>
+  :root { --line: #e3e5e8; --muted: #6b7280; --accent: #2563eb; --warn: #b45309; --ok: #047857; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.5 system-ui, "Malgun Gothic", sans-serif; color: #111827; background: #f8fafc; }
+  main { max-width: 1100px; margin: 0 auto; padding: 24px 16px; }
+  h1 { font-size: 20px; margin: 0 0 16px; }
+  section { background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  button, select, input { font: inherit; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
+  button { cursor: pointer; }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  button:disabled { opacity: .5; cursor: default; }
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { padding: 8px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
+  th { color: var(--muted); font-weight: 500; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; }
+  .CONFIRMED { background: #d1fae5; color: var(--ok); }
+  .REVIEW_REQUIRED { background: #fef3c7; color: var(--warn); }
+  .issues { color: var(--warn); font-size: 12px; white-space: normal; max-width: 260px; }
+  #msg { color: var(--muted); }
+  #msg.err { color: #b91c1c; }
+  dialog { border: 1px solid var(--line); border-radius: 8px; padding: 20px; width: min(480px, 92vw); }
+  dialog label { display: grid; grid-template-columns: 90px 1fr; gap: 8px; align-items: center; margin-bottom: 8px; }
+  dialog pre { max-height: 160px; overflow: auto; background: #f3f4f6; padding: 8px; font-size: 12px; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<main>
+  <h1>영수증 OCR 검토</h1>
+
+  <section>
+    <form id="upload" class="row">
+      <input type="file" name="image" accept=".jpg,.jpeg,.png,.webp" required>
+      <button class="primary" type="submit">업로드 · 인식</button>
+      <span id="msg"></span>
+    </form>
+  </section>
+
+  <section>
+    <div class="row" style="margin-bottom:12px">
+      <select id="f-status">
+        <option value="">전체 상태</option>
+        <option value="REVIEW_REQUIRED">검토필요</option>
+        <option value="CONFIRMED">확정</option>
+      </select>
+      <input type="date" id="f-from"> ~ <input type="date" id="f-to">
+      <button id="btn-search" type="button">조회</button>
+      <button id="btn-csv" type="button">CSV 내보내기</button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>ID</th><th>상태</th><th>일자</th><th>가맹점</th><th>계정과목</th><th>공급가액</th><th>부가세</th><th>합계</th><th>신뢰도</th><th>이슈</th><th></th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<dialog id="edit">
+  <form method="dialog" id="edit-form">
+    <h2 style="font-size:16px;margin-top:0">영수증 #<span id="e-id"></span> 수정</h2>
+    <label>가맹점 <input name="merchant"></label>
+    <label>사업자번호 <input name="bizNo" placeholder="000-00-00000"></label>
+    <label>일자 <input name="date" type="date"></label>
+    <label>계정과목 <select name="category"></select></label>
+    <label>공급가액 <input name="supplyAmount" type="number" min="0"></label>
+    <label>부가세 <input name="vat" type="number" min="0"></label>
+    <label>합계 <input name="totalAmount" type="number" min="0"></label>
+    <div id="e-issues" class="issues"></div>
+    <details><summary>OCR 원문</summary><pre id="e-raw"></pre></details>
+    <div class="row" style="justify-content:flex-end;margin-top:12px">
+      <button value="cancel" formnovalidate>닫기</button>
+      <button value="save" id="e-save">저장 · 재검증</button>
+      <button value="confirm" class="primary">저장 · 확정</button>
+    </div>
+  </form>
+</dialog>
+
+<script>
+const CATEGORIES = ['식대', '교통비', '사무용품', '접대비', '통신비', '기타'];
+const STATUS_LABEL = { CONFIRMED: '확정', REVIEW_REQUIRED: '검토필요' };
+const $ = (s) => document.querySelector(s);
+const won = (n) => (n == null ? '' : Number(n).toLocaleString('ko-KR'));
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+let current = [];
+
+$('#edit-form').category.innerHTML = CATEGORIES.map((c) => `<option>${c}</option>`).join('');
+
+function setMsg(text, isErr = false) {
+  $('#msg').textContent = text;
+  $('#msg').className = isErr ? 'err' : '';
+}
+
+async function api(url, opts) {
+  const res = await fetch(url, opts);
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error?.message || `HTTP ${res.status}`);
+  return body.data;
+}
+
+function filters() {
+  const p = new URLSearchParams();
+  if ($('#f-status').value) p.set('status', $('#f-status').value);
+  if ($('#f-from').value) p.set('from', $('#f-from').value);
+  if ($('#f-to').value) p.set('to', $('#f-to').value);
+  return p;
+}
+
+async function load() {
+  try {
+    current = await api('/api/receipts?' + filters());
+    $('#rows').innerHTML = current.map((r) => `
+      <tr>
+        <td>${r.id}</td>
+        <td><span class="badge ${r.status}">${STATUS_LABEL[r.status] ?? r.status}</span></td>
+        <td>${esc(r.date)}</td>
+        <td>${esc(r.merchant)}</td>
+        <td>${esc(r.category)}</td>
+        <td class="num">${won(r.supplyAmount)}</td>
+        <td class="num">${won(r.vat)}</td>
+        <td class="num">${won(r.totalAmount)}</td>
+        <td class="num">${r.confidence == null ? '' : Math.round(r.confidence * 100) + '%'}</td>
+        <td class="issues">${r.issues.map((i) => esc(i.message)).join('<br>')}</td>
+        <td><button type="button" data-id="${r.id}">${r.status === 'REVIEW_REQUIRED' ? '검토' : '수정'}</button></td>
+      </tr>`).join('') || '<tr><td colspan="11" style="color:var(--muted)">데이터가 없습니다</td></tr>';
+  } catch (e) {
+    setMsg(e.message, true);
+  }
+}
+
+$('#upload').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const btn = ev.target.querySelector('button');
+  btn.disabled = true;
+  setMsg('인식 중...');
+  try {
+    const r = await api('/api/receipts', { method: 'POST', body: new FormData(ev.target) });
+    setMsg(`#${r.id} ${STATUS_LABEL[r.status]} (신뢰도 ${Math.round(r.confidence * 100)}%)`);
+    ev.target.reset();
+    await load();
+  } catch (e) {
+    setMsg(e.message, true);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+$('#rows').addEventListener('click', (ev) => {
+  const id = ev.target.dataset?.id;
+  if (!id) return;
+  const r = current.find((x) => String(x.id) === id);
+  const f = $('#edit-form');
+  $('#e-id').textContent = r.id;
+  for (const k of ['merchant', 'bizNo', 'date', 'category', 'supplyAmount', 'vat', 'totalAmount']) f[k].value = r[k] ?? '';
+  $('#e-issues').innerHTML = r.issues.map((i) => esc(i.message)).join('<br>');
+  $('#e-raw').textContent = r.rawText || '';
+  $('#edit').showModal();
+});
+
+$('#edit').addEventListener('close', async () => {
+  const action = $('#edit').returnValue;
+  if (action !== 'save' && action !== 'confirm') return;
+  const f = $('#edit-form');
+  const str = (v) => (v.trim() === '' ? null : v.trim());
+  const num = (v) => (v === '' ? null : Number(v));
+  const body = {
+    merchant: str(f.merchant.value),
+    bizNo: str(f.bizNo.value),
+    date: str(f.date.value),
+    category: f.category.value,
+    supplyAmount: num(f.supplyAmount.value),
+    vat: num(f.vat.value),
+    totalAmount: num(f.totalAmount.value),
+    confirm: action === 'confirm',
+  };
+  try {
+    const r = await api('/api/receipts/' + $('#e-id').textContent, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    setMsg(`#${r.id} 저장됨: ${STATUS_LABEL[r.status]}`);
+    await load();
+  } catch (e) {
+    setMsg(e.message, true);
+  }
+});
+
+$('#btn-search').addEventListener('click', load);
+$('#btn-csv').addEventListener('click', () => {
+  const p = filters();
+  p.delete('status');
+  location.href = '/api/receipts/export.csv?' + p;
+});
+
+load();
+</script>
+</body>
+</html>
