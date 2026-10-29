@@ -6,10 +6,14 @@
 // 우선순위가 낮을수록(0) 먼저 선택. 실제 결제된 금액 > 합계류
 const TOTAL_KEYWORDS = [
   { re: /(결제금액|승인금액|받을금액|청구금액|결제합계|카드결제)/, rank: 0 },
-  { re: /(총결제|총합계|총금액|총액|합계금액|합계|TOTAL)/i, rank: 1 },
+  // '총'은 '종'으로 오인식되는 경우가 있음(tesseract, receipt05)
+  { re: /([총종]결제|[총종]합계|[총종]금액|[총종]액|합계금액|합계|TOTAL)/i, rank: 1 },
 ];
 // 합계 키워드가 있어도 합계가 아닌 줄
 const TOTAL_EXCLUDE = /(공급가|부가세|부가가치세|세액|과세|면세|할인|거스름|받은금액|잔액|포인트|봉사료|수량)/;
+// 키워드가 없을 때(가장 큰 금액 추정) 제외할 줄: 받은 돈·거스름돈은 합계보다 크거나 무관하다
+const TENDER_LINE = /(현금|받은|거스름|잔돈|잔액|CASH|CHANGE)/i;
+const DISCOUNT_LINE = /할인/;
 const SUPPLY_KEYWORDS = /(공급가액|공급가|과세물품가액|과세물품|물품가액|과세금액)/;
 const VAT_KEYWORDS = /(부가가치세|부가세|세액|VAT)/i;
 const DATE_LINE_KEYWORDS = /(일시|일자|날짜|거래일|판매일|승인일|DATE)/i;
@@ -177,11 +181,39 @@ function amountWithLine(lines, i) {
 
 const amountAt = (lines, i) => amountWithLine(lines, i)?.amount ?? null;
 
+const isMalformed = (line) => MALFORMED_AMOUNT.test(stripNonAmounts(line));
+
+/** 할인 줄의 금액 합(부호 무시) */
+function discountTotal(lines) {
+  let sum = 0;
+  for (const line of lines.filter((l) => DISCOUNT_LINE.test(l))) {
+    const a = [...stripNonAmounts(line).matchAll(AMOUNT_RE)].map((m) => parseInt(m[2].replace(/[\s,]/g, ''), 10));
+    if (a.length) sum += Math.max(...a);
+  }
+  return sum;
+}
+
+/**
+ * 형식이 깨진 결제금액 줄을 (아래 등급 합계 − 할인)으로 맞춰 본다.
+ * 깨진 줄의 숫자열이 계산값으로 시작할 때만 인정(22.5002) → 22500)
+ */
+function reconcileMalformed(lines, pick, candidates) {
+  const digits = stripNonAmounts(pick.line).replace(/\D/g, '');
+  const discount = discountTotal(lines);
+  for (const c of candidates) {
+    if (c.rank <= pick.rank || isMalformed(c.line)) continue;
+    const net = c.amount - discount;
+    if (net > 0 && digits.startsWith(String(net))) return net;
+  }
+  return null;
+}
+
 /**
  * 합계와 그 근거. source:
- *  keyword   합계 키워드 줄에서 읽음
- *  malformed 키워드 줄이지만 금액 형식이 깨져 있음(22.5002 등)
- *  fallback  키워드가 없어 가장 큰 금액으로 추정
+ *  keyword    합계 키워드 줄에서 읽음
+ *  reconciled 키워드 줄의 금액이 깨졌지만 합계 − 할인과 숫자가 일치해 계산값을 씀
+ *  malformed  키워드 줄이지만 금액 형식이 깨져 있음(22.5002 등)
+ *  fallback   키워드가 없어 가장 큰 금액으로 추정
  */
 function extractTotal(lines) {
   const candidates = [];
@@ -196,10 +228,14 @@ function extractTotal(lines) {
   if (candidates.length) {
     const best = Math.min(...candidates.map((c) => c.rank));
     const pick = candidates.filter((c) => c.rank === best).reduce((a, b) => (b.amount > a.amount ? b : a));
-    return { amount: pick.amount, source: MALFORMED_AMOUNT.test(stripNonAmounts(pick.line)) ? 'malformed' : 'keyword' };
+    if (!isMalformed(pick.line)) return { amount: pick.amount, source: 'keyword' };
+    const net = reconcileMalformed(lines, pick, candidates);
+    return net !== null ? { amount: net, source: 'reconciled' } : { amount: pick.amount, source: 'malformed' };
   }
-  // 키워드가 없으면 번호류 줄을 제외한 가장 큰 금액
-  const all = lines.filter((l) => !NON_AMOUNT_LINE.test(l)).flatMap(amountsInLine);
+  // 키워드가 없으면 번호류·현금/거스름 줄을 제외한 가장 큰 금액
+  const all = lines
+    .filter((l) => !NON_AMOUNT_LINE.test(l) && !TENDER_LINE.test(l.replace(/\s+/g, '')))
+    .flatMap(amountsInLine);
   return all.length ? { amount: Math.max(...all), source: 'fallback' } : null;
 }
 
@@ -258,7 +294,7 @@ const EMPTY = Object.freeze({
   supplyAmount: null,
   vat: null,
   totalAmount: null,
-  totalSource: null, // keyword | malformed | fallback (extractTotal 참고)
+  totalSource: null, // keyword | reconciled | malformed | fallback (extractTotal 참고)
   paymentMethod: null,
   cardLast4: null,
   rawText: '',

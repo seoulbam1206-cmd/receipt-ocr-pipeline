@@ -75,14 +75,32 @@ test('totalSource: 키워드 줄이면 keyword', () => {
   assert.equal(parseReceipt('가상가게').totalSource, null);
 });
 
-test('totalSource: 쉼표가 마침표로 깨진 결제금액은 malformed (tesseract 실제 출력, receipt02)', () => {
+test('totalSource: 깨진 결제금액이 합계 − 할인과 숫자가 맞으면 reconciled (tesseract 실제 출력, receipt02)', () => {
   const r = parseReceipt('합계       24,500\n할인       -2,000\n결제금액 = 22.5002)');
-  assert.equal(r.totalAmount, 22);
-  assert.equal(r.totalSource, 'malformed');
+  assert.equal(r.totalAmount, 22500);
+  assert.equal(r.totalSource, 'reconciled');
+  // 할인이 없으면 합계 그대로와 비교
+  assert.equal(parseReceipt('합계 24,500\n결제금액 24.5002)').totalAmount, 24500);
 });
 
-test('totalSource: 총액을 종액으로 읽어 키워드가 없으면 fallback (tesseract 실제 출력, receipt05)', () => {
-  const r = parseReceipt('생수 50001 2 2,000\n삼각김밥 _ 1 1,500\n종액          3,500\n현금          5,000');
-  assert.equal(r.totalAmount, 50001);
+test('totalSource: 깨진 결제금액이 합계 − 할인과 맞지 않으면 계속 malformed', () => {
+  const r = parseReceipt('합계       24,500\n할인       -1,000\n결제금액 = 22.5002)');
+  assert.equal(r.totalAmount, 22);
+  assert.equal(r.totalSource, 'malformed');
+  assert.equal(parseReceipt('결제금액 = 22.5002)').totalSource, 'malformed'); // 맞춰 볼 합계가 없음
+});
+
+test('합계 키워드: 총액을 종액으로 오인식해도 키워드로 인식 (tesseract 실제 출력, receipt05)', () => {
+  const r = parseReceipt(
+    '생수 50001 2 2,000\n삼각김밥 _ 1 1,500\n종액          3,500\n현금          5,000\nAASE        1,500',
+  );
+  assert.equal(r.totalAmount, 3500);
+  assert.equal(r.totalSource, 'keyword');
+  assert.equal(parseReceipt('종합계 12,000\n받은금액 20,000').totalAmount, 12000);
+});
+
+test('fallback: 키워드가 없으면 현금·받은금액·거스름돈 줄은 후보에서 제외', () => {
+  const r = parseReceipt('생수 2 2,000\n김밥 1 1,500\n3,500\n현금 5,000\n받은돈 10,000\n거스름돈 1,500\nCHANGE 6,500');
+  assert.equal(r.totalAmount, 3500);
   assert.equal(r.totalSource, 'fallback');
 });

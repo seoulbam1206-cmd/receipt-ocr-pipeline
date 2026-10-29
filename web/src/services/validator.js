@@ -5,7 +5,7 @@ const BIZ_WEIGHTS = [1, 3, 7, 1, 3, 7, 1, 3, 5];
 // confidence = OCR 신뢰도 * w + 검증 통과율 * (1 - w)
 export const OCR_WEIGHT = 0.4;
 export const STATUS = Object.freeze({ CONFIRMED: 'CONFIRMED', REVIEW_REQUIRED: 'REVIEW_REQUIRED' });
-// parser의 totalSource 중 검토가 필요한 값
+// parser의 totalSource 중 검토가 필요한 값 (reconciled는 합계·할인 두 줄과 일치하므로 제외)
 const TOTAL_UNCERTAIN_MESSAGES = {
   malformed: '합계 줄의 금액 형식이 깨져 있음(OCR 오인식 가능)',
   fallback: '합계 키워드를 찾지 못해 가장 큰 금액으로 추정함',
