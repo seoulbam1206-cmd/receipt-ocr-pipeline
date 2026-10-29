@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Receipt OCR Pipeline · 정적 데모</title>
+<meta name="description" content="가상 영수증 5장을 실제 OCR 파이프라인으로 처리해 저장한 결과를 보여 주는 정적 데모">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232563eb'/%3E%3Cpath d='M10 7h12v18l-2-1.5-2 1.5-2-1.5-2 1.5-2-1.5-2 1.5z' fill='%23fff'/%3E%3C/svg%3E">
+<!-- Pretendard (SIL OFL, 무료). 불러오지 못하면 시스템 글꼴로 표시 -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <div class="brand">
+      <svg class="logo" viewBox="0 0 32 32" aria-hidden="true">
+        <rect width="32" height="32" rx="8" fill="currentColor"/>
+        <path d="M10 7h12v18l-2-1.5-2 1.5-2-1.5-2 1.5-2-1.5-2 1.5z" fill="#fff"/>
+        <path d="M13 12h6M13 15.5h6M13 19h3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+      </svg>
+      <span>Receipt OCR Pipeline</span>
+    </div>
+    <h1>영수증 사진 한 장으로 지출 입력과 검증까지</h1>
+    <p class="lead">OCR로 가맹점·일자·금액을 읽고, 합계식·사업자번호·중복을 검증해 <strong>확신이 없는 건만</strong> 사람에게 넘깁니다.</p>
+    <ul class="stack" aria-label="사용 기술">
+      <li>Node.js · Express</li>
+      <li>Python · FastAPI · PaddleOCR</li>
+      <li>tesseract.js</li>
+      <li>MySQL 8.0</li>
+    </ul>
+    <ol class="flow" aria-label="처리 단계">
+      <li>전처리</li><li>OCR</li><li>필드 추출</li><li>검증</li><li>계정과목 분류</li><li>저장</li>
+    </ol>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <section class="card" aria-labelledby="upload-title">
+    <div class="card-head">
+      <h2 id="upload-title">샘플 결과 보기</h2>
+      <span class="hint" id="data-info">가상 영수증 5장</span>
+    </div>
+
+    <p class="demo-note" role="note"><strong>저장된 결과를 보여 주는 데모입니다. 실제 OCR 서비스는 로컬에서 실행합니다.</strong>
+      아래 결과는 샘플 5장을 실제 코드(PaddleOCR 포함)로 한 번 처리해 저장해 둔 값입니다. 이 페이지에는 서버가 없어 업로드는 할 수 없습니다.</p>
+
+    <div class="samples">
+      <div class="samples-head">
+        <h3>샘플을 눌러 결과 보기</h3>
+        <span class="hint">모두 가상 영수증입니다</span>
+      </div>
+      <div class="sample-list" id="samples"></div>
+    </div>
+  </section>
+
+  <section class="card result" id="result" hidden aria-live="polite" aria-labelledby="result-title">
+    <div class="card-head">
+      <h2 id="result-title">인식 결과</h2>
+      <span class="hint" id="result-file"></span>
+    </div>
+    <div class="result-grid">
+      <figure class="preview">
+        <img id="preview" alt="샘플 영수증 원본">
+        <figcaption>원본 이미지</figcaption>
+      </figure>
+      <div class="extract" id="extract"></div>
+    </div>
+  </section>
+
+  <section class="card" aria-labelledby="list-title">
+    <div class="card-head">
+      <h2 id="list-title">처리 결과 목록</h2>
+      <span class="hint" id="list-count"></span>
+    </div>
+    <div class="filters">
+      <select id="f-status" aria-label="상태">
+        <option value="">전체 상태</option>
+        <option value="REVIEW_REQUIRED">검토 필요</option>
+        <option value="CONFIRMED">확정</option>
+      </select>
+      <span class="hint">날짜 조회 · CSV 내보내기는 DB가 필요해 로컬 실행에서만 됩니다</span>
+    </div>
+    <div class="table-wrap">
+      <table class="records">
+        <thead><tr><th>ID</th><th>상태</th><th>일자</th><th>가맹점</th><th>계정과목</th><th class="num">공급가액</th><th class="num">부가세</th><th class="num">합계</th><th class="num">신뢰도</th><th>이슈</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </section>
+
+</main>
+
+<footer class="wrap footer">
+  가상 데이터로만 시연합니다 · 정적 데모(서버 없음) · 전체 기능과 실행 방법은 <a href="https://github.com/seoulbam1206-cmd/receipt-ocr-pipeline#5-설치-및-실행-windows--powershell" target="_blank" rel="noopener">GitHub README</a> 참고
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>
