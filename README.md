@@ -19,13 +19,16 @@ short_description: 영수증 OCR → 필드 추출 → 검증 데모 (가상 샘
   </tr>
   <tr>
     <td align="center">PC (1280px) · 카페 샘플 → 확정</td>
-    <td align="center">모바일 (390px) · 편의점 샘플 → 검토 필요</td>
+    <td align="center">모바일 (390px) · 편의점 샘플 → 검토 필요<br><sub>파서 수정 전 tesseract.js 결과. 합계를 50,001로 잘못 읽었지만 합계 근거 검사로 걸러졌습니다. 지금 코드로는 3,500원 확정(<a href="#7-벤치마크">벤치마크</a>)</sub></td>
   </tr>
 </table>
 
-- **데모**: 배포 후 추가 (Hugging Face Spaces 무료 CPU, 가상 샘플 5장만 처리. [배포 방법](#5-5-hugging-face-spaces에-배포-무료))
+- **데모 (정적)**: 링크 준비 중 — GitHub Pages를 켜면 `https://seoulbam1206-cmd.github.io/receipt-ocr-pipeline/`에서 열립니다.
+  - **저장된 결과를 보여 주는 데모입니다.** 가상 샘플 5장을 실제 코드(PaddleOCR 포함)로 한 번 처리한 결과를 보여 줍니다. 서버가 없어 업로드·검토/확정·CSV는 동작하지 않습니다.
+  - **전체 기능(업로드, OCR, 검토·확정, MySQL 저장, CSV)은 로컬에서 실행합니다.** [설치 및 실행](#5-설치-및-실행-windows--powershell), [정적 데모 만들기](#5-6-정적-데모-github-pages)
+  - 무료 서버에서는 PaddleOCR를 돌릴 수 없고 Hugging Face Docker Space는 유료라, 서버가 있는 공개 데모는 운영하지 않습니다.
 - 중복 감지: 같은 영수증(가맹점·일자·합계가 같음)을 다시 올리면 `DUPLICATE` 이슈와 함께 `REVIEW_REQUIRED`로 분류됩니다.
-- 샘플 이미지는 `samples/`(원본, 벤치마크용)와 `web/public/samples/`(데모 화면의 "샘플로 바로 테스트"용 복사본) 두 곳에 있습니다. `npm run make-samples`로 다시 만들면 `web/public/samples/`에도 복사해 주세요.
+- 샘플 이미지는 `samples/`(원본, 벤치마크용), `web/public/samples/`(데모 화면의 "샘플로 바로 테스트"용 복사본), `docs/samples/`(정적 데모용 복사본) 세 곳에 있습니다. `npm run make-samples`로 다시 만들면 `web/public/samples/`에도 복사하고, [정적 데모 결과](#5-6-정적-데모-github-pages)도 다시 만들어 주세요.
 
 영수증 이미지를 올리면 **전처리 → OCR → 필드 추출 → 검증 → 계정과목 분류 → 저장**까지 자동으로 처리하고, 확신이 없는 건만 `REVIEW_REQUIRED`로 골라 사람이 검토한 뒤 지출결의서용 CSV로 내보냅니다.
 
@@ -59,9 +62,10 @@ short_description: 영수증 OCR → 필드 추출 → 검증 데모 (가상 샘
 | 출력 | 지출결의서용 CSV 내보내기 | ✅ |
 | 출력 | 지출결의서 xlsx 양식 직접 출력 | 🗓 |
 | 품질 | 단위·API 테스트 (Node 61개 + MySQL 연결 테스트, Python 9개), 가상 샘플 벤치마크 | ✅ |
-| 운영 | Docker 단일 컨테이너(web + ocr-service), Hugging Face Spaces 배포 준비 | ✅ |
+| 운영 | Docker 단일 컨테이너(web + ocr-service). Hugging Face Docker Space용으로 만들었으나 유료라 사용하지 않음(참고용) | ✅ |
+| 운영 | 정적 데모 페이지(`docs/`, GitHub Pages용): 샘플 5장의 저장된 결과 표시, 결과 생성 스크립트 | ✅ |
 | 운영 | 공개 데모 제한: 데모 모드(원문 미저장·최근 50건·저장 한도 200건), 업로드 차단, IP당 요청 제한 | ✅ |
-| 운영 | 실제 배포 (데모 링크) | 🗓 |
+| 운영 | 정적 데모 공개 (GitHub Pages 켜기, 데모 링크) | 🗓 |
 | 운영 | CI (GitHub Actions), docker compose | 🗓 |
 | 운영 | 인증·다중 사용자 | 🗓 |
 
@@ -153,7 +157,7 @@ flowchart LR
 | DB | MySQL 8.0 (TiDB Cloud 호환 문법). better-sqlite3는 예전 데이터 이전 스크립트에서만 사용(devDependency) |
 | ocr-service | Python 3.12, FastAPI, uvicorn, PaddleOCR 3.7 (PP-OCRv5 mobile det + korean rec), paddlepaddle 3.3 (CPU), OpenCV, psutil |
 | 테스트 | `node:test` (단위·API 61개, MySQL 연결 10개), pytest (9개) |
-| 배포 | Docker (Hugging Face Spaces, 무료 CPU), TiDB Cloud Starter (무료) |
+| 배포 | GitHub Pages (정적 데모, 무료). Docker 이미지는 참고용(Hugging Face Docker Space가 유료라 사용 안 함). TiDB Cloud Starter (무료, 연결 미검증) |
 | 프론트엔드 | 단일 HTML + vanilla JS (빌드 없음) |
 
 ```
@@ -169,10 +173,12 @@ ai-ocr-pipeline/
 │  │  └─ db/               repository(MySQL) · memoryRepository(테스트용)
 │  ├─ db/migrations/       테이블 생성 SQL
 │  ├─ public/index.html    검토 화면
-│  ├─ scripts/             migrate.js, import-sqlite.js, benchmark.js, make-samples.js
+│  ├─ scripts/             migrate.js, import-sqlite.js, benchmark.js, make-samples.js, export-demo.js
 │  └─ tests/
+├─ docs/                   GitHub Pages 정적 데모 (index.html · app.js · styles.css · data/results.json · samples/)
+│  └─ screenshots/         README 스크린샷
 ├─ docker/start.sh        컨테이너 시작 순서 (ocr-service → 마이그레이션 → web)
-├─ Dockerfile              Hugging Face Spaces용 단일 이미지
+├─ Dockerfile              단일 이미지 (Hugging Face Docker Space용, 참고용)
 ├─ ocr-service/            Python OCR 서비스
 │  ├─ app/                 main.py(FastAPI) · engine.py(PaddleOCR) · layout.py(줄 복원) · config.py
 │  └─ tests/
@@ -286,11 +292,13 @@ DB_SSL=true
 
 그다음 `npm run db:migrate`로 테이블을 만듭니다. 값은 TiDB Cloud 콘솔의 Connect 화면에 나옵니다. TiDB Cloud는 암호화 연결이 필수라 `DB_SSL=true`가 필요합니다. 아직 실제 TiDB Cloud 연결은 검증하지 않았습니다.
 
-### 5-5. Hugging Face Spaces에 배포 (무료)
+### 5-5. Hugging Face Spaces에 배포 (참고용 · 현재 사용 안 함)
+
+> **현재 사용하지 않습니다.** Hugging Face Docker Space가 유료라 배포하지 않았고, 공개 데모는 [5-6. 정적 데모](#5-6-정적-데모-github-pages)로 대신합니다. 아래 내용은 Docker 단일 컨테이너 구성과 배포 절차를 설명하는 참고 자료로 남겨 둡니다. 실제 Space 빌드·동작은 검증하지 않았습니다.
 
 저장소 루트의 `Dockerfile` 하나로 web(Node)과 ocr-service(PaddleOCR)가 한 컨테이너에서 같이 돕니다. README 맨 위의 설정 블록(`sdk: docker`, `app_port: 7860`)은 Space가 읽는 설정이고, GitHub에서는 작은 표로 보입니다.
 
-**비용**: Hugging Face 무료 CPU(CPU basic)와 TiDB Cloud Starter(무료) 모두 카드 등록 없이 쓸 수 있습니다. Space 설정에서 하드웨어 업그레이드나 Persistent storage를 켜면 유료가 되니 켜지 마세요. TiDB는 Spending limit을 0으로 두면 무료 한도 안에서만 동작합니다.
+**비용**: Docker Space는 유료라 쓰지 않습니다. TiDB Cloud Starter는 무료이고, Spending limit을 0으로 두면 무료 한도 안에서만 동작합니다.
 
 **컨테이너 기본값** (`Dockerfile`의 `ENV`. Space의 Variables로 바꿀 수 있음)
 
@@ -364,9 +372,32 @@ PC(i7-1165G7, 모델 캐시 있음)에서 이 스크립트를 실행하니 web�
    ```
 6. **빌드 확인**: Space의 **Logs**에서 빌드가 끝나고(처음에는 10~20분 정도) `[server] http://localhost:7860`이 나오면 성공입니다. 실패하면 Build 로그를 확인합니다.
 7. **동작 확인**: Space 화면에서 샘플 5장을 눌러 봅니다. 업로드 영역이 숨겨져 있고 "가짜 샘플만 사용하세요" 안내가 보여야 합니다.
-8. **README에 링크 추가**: 위의 "데모: 배포 후 추가"를 Space 주소로 바꿉니다.
+8. **README에 링크 추가**: README 맨 위의 데모 줄에 Space 주소를 추가합니다.
 
 코드를 고친 뒤에는 커밋하고, 5번(복사본을 새로 clone)부터 다시 하면 Space가 다시 빌드됩니다.
+
+### 5-6. 정적 데모 (GitHub Pages)
+
+서버 없이 동작하는 데모입니다. 샘플 5장을 **로컬에서 실제 코드로 한 번 처리한 결과**를 JSON으로 저장해 두고, `docs/` 페이지가 그 결과를 보여 줍니다. OCR은 브라우저에서 돌지 않습니다.
+
+| 파일 | 내용 |
+|---|---|
+| [web/scripts/export-demo.js](web/scripts/export-demo.js) | 샘플 5장을 파이프라인(전처리 → OCR → 파싱 → 검증 → 분류)으로 처리해 `docs/data/results.json` 저장, 이미지를 `docs/samples/`로 복사. DB 사용 안 함 |
+| [docs/index.html](docs/index.html), `app.js`, `styles.css` | `web/public`과 같은 디자인. 샘플을 누르면 저장된 결과 표시. 업로드·검토/확정·CSV는 빼고 "로컬에서만 동작" 안내로 바꿈 |
+
+결과 다시 만들기 (파서·검증 코드를 고친 뒤):
+
+```powershell
+# 1) ocr-service 실행 (5-2)
+# 2) 다른 창에서
+cd web
+node scripts/export-demo.js                     # 기본 PaddleOCR
+node scripts/export-demo.js --engine tesseract  # Python 없이
+```
+
+화면 확인: `cd docs; python -m http.server 8765` 후 `http://127.0.0.1:8765`. `index.html`을 파일로 바로 열면 브라우저가 JSON 읽기를 막아 결과가 나오지 않습니다.
+
+현재 저장된 결과(PaddleOCR, 2026-10-29)는 5장 모두 `CONFIRMED`라 데모 화면에는 검증 경고가 나오지 않습니다. 경고가 걸러지는 예는 위 모바일 스크린샷(파서 수정 전 결과)과 [벤치마크](#7-벤치마크)를 참고하세요.
 
 ## 6. 입출력 예시
 
