@@ -1,3 +1,15 @@
+---
+title: AI OCR Pipeline
+emoji: 🧾
+colorFrom: blue
+colorTo: gray
+sdk: docker
+app_port: 7860
+pinned: false
+license: mit
+short_description: 영수증 OCR → 필드 추출 → 검증 데모 (가상 샘플 전용)
+---
+
 # AI OCR Pipeline — 영수증 자동 입력·검증
 
 <table>
@@ -11,6 +23,7 @@
   </tr>
 </table>
 
+- **데모**: 배포 후 추가 (Hugging Face Spaces 무료 CPU, 가상 샘플 5장만 처리. [배포 방법](#5-5-hugging-face-spaces에-배포-무료))
 - 중복 감지: 같은 영수증(가맹점·일자·합계가 같음)을 다시 올리면 `DUPLICATE` 이슈와 함께 `REVIEW_REQUIRED`로 분류됩니다.
 - 샘플 이미지는 `samples/`(원본, 벤치마크용)와 `web/public/samples/`(데모 화면의 "샘플로 바로 테스트"용 복사본) 두 곳에 있습니다. `npm run make-samples`로 다시 만들면 `web/public/samples/`에도 복사해 주세요.
 
@@ -45,8 +58,11 @@
 | 저장 | TiDB Cloud(무료) 전환: 환경 변수만 바꾸도록 구성 (호환 문법·TLS 옵션). 실제 TiDB 연결은 아직 검증 안 함 | 🗓 |
 | 출력 | 지출결의서용 CSV 내보내기 | ✅ |
 | 출력 | 지출결의서 xlsx 양식 직접 출력 | 🗓 |
-| 품질 | 단위·API 테스트 (Node 51개 + MySQL 연결 테스트, Python 9개), 가상 샘플 벤치마크 | ✅ |
-| 운영 | Docker / docker compose, CI (GitHub Actions) | 🗓 |
+| 품질 | 단위·API 테스트 (Node 61개 + MySQL 연결 테스트, Python 9개), 가상 샘플 벤치마크 | ✅ |
+| 운영 | Docker 단일 컨테이너(web + ocr-service), Hugging Face Spaces 배포 준비 | ✅ |
+| 운영 | 공개 데모 제한: 데모 모드(원문 미저장·최근 50건·저장 한도 200건), 업로드 차단, IP당 요청 제한 | ✅ |
+| 운영 | 실제 배포 (데모 링크) | 🗓 |
+| 운영 | CI (GitHub Actions), docker compose | 🗓 |
 | 운영 | 인증·다중 사용자 | 🗓 |
 
 ## 1. 문제 정의
@@ -136,7 +152,8 @@ flowchart LR
 | web | Node.js 22+, Express 5, multer, zod 4, sharp, tesseract.js 7, mysql2, dotenv |
 | DB | MySQL 8.0 (TiDB Cloud 호환 문법). better-sqlite3는 예전 데이터 이전 스크립트에서만 사용(devDependency) |
 | ocr-service | Python 3.12, FastAPI, uvicorn, PaddleOCR 3.7 (PP-OCRv5 mobile det + korean rec), paddlepaddle 3.3 (CPU), OpenCV, psutil |
-| 테스트 | `node:test` (단위·API 49개, MySQL 연결 6개), pytest (9개) |
+| 테스트 | `node:test` (단위·API 61개, MySQL 연결 10개), pytest (9개) |
+| 배포 | Docker (Hugging Face Spaces, 무료 CPU), TiDB Cloud Starter (무료) |
 | 프론트엔드 | 단일 HTML + vanilla JS (빌드 없음) |
 
 ```
@@ -145,6 +162,7 @@ ai-ocr-pipeline/
 │  ├─ src/
 │  │  ├─ server.js         진입점 (엔진 선택, 기동)
 │  │  ├─ app.js            Express 조립
+│  │  ├─ rateLimit.js      IP당 요청 제한
 │  │  ├─ config.js         환경 변수
 │  │  ├─ routes/           REST API
 │  │  ├─ services/         preprocess · ocrService · parser · validator · categorizer · exporter · pipeline
@@ -153,6 +171,8 @@ ai-ocr-pipeline/
 │  ├─ public/index.html    검토 화면
 │  ├─ scripts/             migrate.js, import-sqlite.js, benchmark.js, make-samples.js
 │  └─ tests/
+├─ docker/start.sh        컨테이너 시작 순서 (ocr-service → 마이그레이션 → web)
+├─ Dockerfile              Hugging Face Spaces용 단일 이미지
 ├─ ocr-service/            Python OCR 서비스
 │  ├─ app/                 main.py(FastAPI) · engine.py(PaddleOCR) · layout.py(줄 복원) · config.py
 │  └─ tests/
@@ -242,6 +262,12 @@ $env:OCR_ENGINE='paddle'; npm start
 | `DB_SSL` | `false` | 암호화 연결(TLS 1.2+, 인증서 검증). TiDB Cloud는 `true` |
 | `DB_TIMEZONE` | `+09:00` | 세션 시간대 (`created_at` 기준) |
 | `DB_CONNECTION_LIMIT` | `5` | 커넥션 풀 크기 |
+| `DB_MIGRATE_USER` / `DB_MIGRATE_PASSWORD` | (없음) | 마이그레이션만 다른 계정으로 실행할 때 |
+| `DEMO_MODE` | `false` | `true`면 OCR 원문 미저장, 최근 `DEMO_KEEP_LATEST`건만 유지, `DEMO_MAX_ROWS`건 이상이면 저장 거부 |
+| `DEMO_KEEP_LATEST` / `DEMO_MAX_ROWS` | `50` / `200` | 데모 모드의 보관 건수 / 저장 한도(documents 전체 행 수) |
+| `DEMO_UPLOAD` | `true` | `false`면 파일 업로드 차단, 화면의 샘플만 처리 |
+| `RATE_LIMIT_API_PER_MIN` / `RATE_LIMIT_OCR_PER_MIN` | 끔 (데모 모드면 `120` / `10`) | IP당 1분 요청 수. `0`이면 끔 |
+| `TRUST_PROXY` | `false` | 프록시 뒤에서 실제 사용자 IP를 쓸 때 프록시 단계 수(Spaces는 `1`) |
 
 ocr-service 변수는 [ocr-service/.env.example](ocr-service/.env.example)에 있습니다.
 
@@ -259,6 +285,88 @@ DB_SSL=true
 ```
 
 그다음 `npm run db:migrate`로 테이블을 만듭니다. 값은 TiDB Cloud 콘솔의 Connect 화면에 나옵니다. TiDB Cloud는 암호화 연결이 필수라 `DB_SSL=true`가 필요합니다. 아직 실제 TiDB Cloud 연결은 검증하지 않았습니다.
+
+### 5-5. Hugging Face Spaces에 배포 (무료)
+
+저장소 루트의 `Dockerfile` 하나로 web(Node)과 ocr-service(PaddleOCR)가 한 컨테이너에서 같이 돕니다. README 맨 위의 설정 블록(`sdk: docker`, `app_port: 7860`)은 Space가 읽는 설정이고, GitHub에서는 작은 표로 보입니다.
+
+**비용**: Hugging Face 무료 CPU(CPU basic)와 TiDB Cloud Starter(무료) 모두 카드 등록 없이 쓸 수 있습니다. Space 설정에서 하드웨어 업그레이드나 Persistent storage를 켜면 유료가 되니 켜지 마세요. TiDB는 Spending limit을 0으로 두면 무료 한도 안에서만 동작합니다.
+
+**컨테이너 기본값** (`Dockerfile`의 `ENV`. Space의 Variables로 바꿀 수 있음)
+
+| 변수 | 값 |
+|---|---|
+| `PORT` | `7860` |
+| `OCR_ENGINE` | `paddle` (tessdata도 들어 있어 `tesseract`로 바꿔도 동작) |
+| `DEMO_MODE` / `DEMO_UPLOAD` | `true` / `false` |
+| `TRUST_PROXY` | `1` |
+| `DB_PORT` / `DB_NAME` / `DB_SSL` | `4000` / `ocr_pipeline` / `true` |
+
+**Secrets에 넣을 값** (이미지와 코드에는 넣지 않음)
+
+| 이름 | 값 |
+|---|---|
+| `DB_HOST` | TiDB Connect 화면의 Host (`gateway01.<region>.prod.aws.tidbcloud.com`) |
+| `DB_USER` | 서버용 계정 (아래 권한 참고, 예: `<prefix>.ocr_app`) |
+| `DB_PASSWORD` | 그 계정의 비밀번호 |
+| `DB_MIGRATE_USER` / `DB_MIGRATE_PASSWORD` | (선택) 컨테이너에서 새 마이그레이션까지 적용하고 싶을 때만 |
+
+**DB 계정 최소 권한**
+
+| 용도 | 필요한 권한 | 이유 |
+|---|---|---|
+| 서버 실행 | `documents`에 `SELECT, INSERT, UPDATE, DELETE` | 조회·저장·수정, 데모 모드에서 오래된 행 삭제(데모 모드가 아니면 `DELETE`는 필요 없음) |
+| 시작할 때 자동 마이그레이션 (적용할 파일이 없을 때) | `schema_migrations`에 `SELECT` | 이미 적용된 파일만 확인하고 끝남. CREATE 문을 보내지 않음 |
+| 마이그레이션 적용 | DB 전체에 `CREATE, SELECT, INSERT` (나중에 열·인덱스를 바꾸는 파일이 생기면 `ALTER, INDEX`도) | 테이블 생성, `schema_migrations` 기록 |
+
+`SELECT, INSERT, UPDATE, DELETE`만으로 서버는 동작합니다. 하지만 테이블을 처음 만들 때는 `CREATE`가 필요합니다. 그래서 **처음 한 번은 PC에서 관리자(`<prefix>.root`) 계정으로 마이그레이션**하고, Space에는 권한이 적은 서버용 계정만 넣습니다.
+
+**잠들었다 깨어날 때**: 무료 Space는 48시간 동안 방문이 없으면 잠들고, 다음 방문 때 컨테이너가 처음부터 다시 시작합니다. `docker/start.sh`는 이 순서로 시작합니다.
+
+1. ocr-service를 띄웁니다. PaddleOCR 모델은 빌드 때 받아 두었으므로 깨어날 때 다운로드하지 않습니다.
+2. 그동안 마이그레이션을 실행합니다. TiDB가 깨어나는 중이라 실패하면 최대 5번 다시 시도합니다(약 45초).
+3. ocr-service 준비(`/health`가 `ok: true`)를 확인한 뒤 web을 7860 포트로 엽니다. 포트가 열리기 전까지 Space는 "Starting" 화면을 보여 주므로, 준비되지 않은 OCR로 요청이 가지 않습니다.
+
+PC(i7-1165G7, 모델 캐시 있음)에서 이 스크립트를 실행하니 web이 열리기까지 32초, 첫 OCR 8.5초, 이후 건당 3~5초가 걸렸습니다. Space에서는 다를 수 있습니다. DB 커넥션 풀은 TCP keepalive를 켜고 쉬는 연결을 1분 뒤 닫아, 오래 쉰 뒤 끊긴 연결을 다시 쓰지 않게 했습니다. `GET /api/health`는 요청 제한 없이 응답하고, Docker `HEALTHCHECK`도 이 주소를 씁니다(시작 유예 180초).
+
+**로컬 Docker 테스트를 건너뛸 때** (RAM 8GB에서 Docker Desktop이 무거운 경우)
+
+- 컨테이너가 하는 일을 PC에서 그대로 실행해 확인합니다. Git Bash에서:
+  ```bash
+  export PATH="$PWD/ocr-service/.venv/Scripts:$PATH" PORT=7860 OCR_ENGINE=paddle DEMO_MODE=true DEMO_UPLOAD=false TRUST_PROXY=1
+  bash docker/start.sh        # 로컬 MySQL(web/.env) 사용. 끝낼 때 node·python 프로세스도 종료
+  ```
+- 이미지 빌드는 Space에 올린 뒤 Space의 **Logs → Build** 탭에서 확인합니다(무료). 실패하면 그 로그를 보고 고칩니다.
+
+#### 배포 순서 (직접 할 일)
+
+1. **TiDB 테이블 만들기**: PC에서 한 번만 합니다. 값은 PowerShell 창에만 넣고 파일에는 쓰지 않습니다(이 창의 값이 `web\.env`보다 우선합니다).
+   ```powershell
+   cd web
+   $env:DB_HOST='<Host>'; $env:DB_PORT='4000'; $env:DB_USER='<prefix>.root'; $env:DB_NAME='ocr_pipeline'; $env:DB_SSL='true'
+   $s = Read-Host 'TiDB 비밀번호' -AsSecureString; $env:DB_PASSWORD = [System.Net.NetworkCredential]::new('', $s).Password
+   npm run db:migrate
+   ```
+2. **서버용 계정 만들기**: TiDB 콘솔의 SQL Editor에서 실행합니다. 비밀번호는 콘솔에서 직접 정합니다.
+   ```sql
+   CREATE USER '<prefix>.ocr_app' IDENTIFIED BY '<새 비밀번호>';
+   GRANT SELECT, INSERT, UPDATE, DELETE ON ocr_pipeline.documents TO '<prefix>.ocr_app';
+   GRANT SELECT ON ocr_pipeline.schema_migrations TO '<prefix>.ocr_app';
+   ```
+3. **Space 만들기**: huggingface.co에 가입(무료)하고 **New Space**에서 이름을 정합니다. License `MIT`, SDK `Docker` → `Blank`, Hardware `CPU basic · Free`, Public을 고릅니다.
+4. **Secrets 넣기**: Space의 **Settings → Variables and secrets → New secret**에서 `DB_HOST`, `DB_USER`(`<prefix>.ocr_app`), `DB_PASSWORD`를 넣습니다.
+5. **파일 올리기**: 커밋된 파일만 올라가도록 깨끗한 복사본을 만든 뒤 업로드합니다. 토큰은 huggingface.co **Settings → Access Tokens**에서 Write 권한으로 만들고, 로그인할 때 붙여 넣습니다.
+   ```powershell
+   pip install -U huggingface_hub
+   hf auth login
+   git clone D:\myproject\ai-ocr-pipeline $env:TEMP\ocr-space
+   hf upload <사용자명>/<Space 이름> $env:TEMP\ocr-space . --repo-type space --exclude ".git/*"
+   ```
+6. **빌드 확인**: Space의 **Logs**에서 빌드가 끝나고(처음에는 10~20분 정도) `[server] http://localhost:7860`이 나오면 성공입니다. 실패하면 Build 로그를 확인합니다.
+7. **동작 확인**: Space 화면에서 샘플 5장을 눌러 봅니다. 업로드 영역이 숨겨져 있고 "가짜 샘플만 사용하세요" 안내가 보여야 합니다.
+8. **README에 링크 추가**: 위의 "데모: 배포 후 추가"를 Space 주소로 바꿉니다.
+
+코드를 고친 뒤에는 커밋하고, 5번(복사본을 새로 clone)부터 다시 하면 Space가 다시 빌드됩니다.
 
 ## 6. 입출력 예시
 
@@ -315,14 +423,16 @@ CSV 내보내기(`GET /api/receipts/export.csv`):
 
 | 메서드 | 경로 | 설명 |
 |---|---|---|
-| `POST` | `/api/receipts` | multipart 필드 `image`. 처리 후 `201 { data: Receipt }` |
+| `POST` | `/api/receipts` | multipart 필드 `image`. 처리 후 `201 { data: Receipt }` (`DEMO_UPLOAD=false`면 403) |
+| `POST` | `/api/receipts/samples/:name` | 서버에 있는 샘플 이미지(`web/public/samples/`) 처리. 업로드가 꺼져도 동작 |
 | `GET` | `/api/receipts?status=&from=&to=&category=` | 목록 (일자 내림차순) |
 | `GET` | `/api/receipts/:id` | 상세 |
 | `PATCH` | `/api/receipts/:id` | 수정 후 재검증. `confirm: true`면 필수 필드가 있을 때 `CONFIRMED`로 확정 |
 | `GET` | `/api/receipts/export.csv?from=&to=` | 지출결의서 CSV (UTF-8 BOM) |
-| `GET` | `/api/health` | 상태 및 OCR 대기 건수 |
+| `GET` | `/api/health` | 상태 및 OCR 대기 건수 (요청 제한 없음) |
+| `GET` | `/api/config` | 화면용 설정 `{ demoMode, uploadEnabled }` |
 
-에러 코드: `FILE_REQUIRED`(400), `INVALID_FILE_TYPE`(400), `FILE_TOO_LARGE`(413), `INVALID_IMAGE`(422), `VALIDATION_ERROR`(400), `NOT_FOUND`(404), `INTERNAL_ERROR`(500)
+에러 코드: `FILE_REQUIRED`(400), `INVALID_FILE_TYPE`(400), `FILE_TOO_LARGE`(413), `INVALID_IMAGE`(422), `VALIDATION_ERROR`(400), `UPLOAD_DISABLED`(403), `NOT_FOUND`·`SAMPLE_NOT_FOUND`(404), `DEMO_STORAGE_FULL`(409), `RATE_LIMITED`(429, `Retry-After`), `INTERNAL_ERROR`(500)
 검증 이슈 코드: `MISSING_FIELDS`, `AMOUNT_MISMATCH`, `INVALID_BIZ_NO`, `FUTURE_DATE`, `DATE_TOO_OLD`, `DUPLICATE`, `TOTAL_UNCERTAIN`
 
 ocr-service: `GET /health` → `{ ok, engine, peakRssMb }`, `POST /ocr`(multipart `image`) → `{ text, confidence, lines: [{ text, confidence, bbox }] }`
@@ -356,8 +466,8 @@ npm run benchmark -- --engine paddle --no-preprocess
 ## 8. 테스트
 
 ```powershell
-cd web; npm test                                  # 49개: 파서 fixture 9종, 검증, 전처리, OCR 큐/HTTP 어댑터, API, DB 행 변환 (MySQL 불필요)
-cd web; npm run test:db                           # MySQL 연결 6개: web/.env 의 DB 사용, 자기가 만든 행만 지움 (db:migrate 먼저)
+cd web; npm test                                  # 61개: 파서 fixture 9종, 검증, 전처리, OCR 큐/HTTP 어댑터, API, 데모 제한, DB 행 변환 (MySQL 불필요)
+cd web; npm run test:db                           # MySQL 연결 10개: web/.env 의 DB 사용, 자기가 만든 행만 지움 (db:migrate 먼저)
 cd ocr-service; .venv\Scripts\python -m pytest    # 9개: 줄 복원 로직, API (가짜 엔진)
 ```
 
@@ -369,10 +479,11 @@ cd ocr-service; .venv\Scripts\python -m pytest    # 9개: 줄 복원 로직, API
 - 기울기 보정(deskew)과 영수증 영역 자동 크롭이 없습니다.
 - 계정과목 분류는 키워드 기반이라 식대와 접대비처럼 업종만으로 구분되지 않는 경우를 판단하지 못합니다.
 - 중복 판정은 가맹점명 문자열에 의존하므로, OCR이 가맹점명을 다르게 읽으면 같은 영수증을 중복으로 잡지 못합니다.
-- 인증·다중 사용자 기능이 없는 로컬용 서버입니다.
+- 인증·다중 사용자 기능이 없습니다. 공개 데모는 샘플만 처리하고 요청 수·저장 건수를 제한하는 방식으로 막아 둡니다.
+- 요청 제한은 서버 메모리에서 세므로 서버 1대 기준이고, 재시작하면 초기화됩니다.
 
 **로드맵**
-1. **컨테이너화**: web / ocr-service 각각 Dockerfile + `docker compose`로 한 번에 기동
+1. **CI·로컬 컨테이너**: GitHub Actions로 테스트·이미지 빌드 확인, 로컬용 `docker compose`(MySQL 포함)
 2. **문서별 처리 구조**: `DocumentProcessor { parse, validate, categorize }` 인터페이스로 영수증·세금계산서·거래명세서 등 문서 종류별 규칙 분리 (전략 패턴)
 3. **ML 모델 추가 (ocr-service)**: 문서 종류 자동 분류, 금액·빈도 기반 이상 지출 탐지
 4. **인식률 평가 지표**: 실제 영수증(비식별화) 평가셋 구축, 필드별 정확도·CER 자동 리포트
