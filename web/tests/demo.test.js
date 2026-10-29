@@ -6,6 +6,7 @@ import path from 'node:path';
 import { createApp } from '../src/app.js';
 import { createMemoryRepository } from '../src/db/memoryRepository.js';
 import { createOcrService } from '../src/services/ocrService.js';
+import { createRateLimiter } from '../src/rateLimit.js';
 import { FIXTURES } from './fixtures.js';
 
 const NOW = new Date(2026, 9, 27, 15, 0, 0);
@@ -28,11 +29,11 @@ after(async () => {
 });
 
 /** demo 설정으로 앱을 띄우고 { base, repo, uploadDir } 반환 */
-async function start(demo) {
+async function start(demo, extra = {}) {
   const uploadDir = await mkdtemp(path.join(os.tmpdir(), 'receipt-ocr-demo-'));
   dirs.push(uploadDir);
   const repo = createMemoryRepository();
-  const server = createApp({ repo, ocr: createOcrService(fakeEngine), uploadDir, now: () => NOW, demo }).listen(0);
+  const server = createApp({ repo, ocr: createOcrService(fakeEngine), uploadDir, now: () => NOW, demo, ...extra }).listen(0);
   servers.push(server);
   await new Promise((r) => server.once('listening', r));
   return { base: `http://127.0.0.1:${server.address().port}/api`, repo, uploadDir };
@@ -103,4 +104,42 @@ test('데모 모드가 꺼져 있으면 원문 저장, 삭제·한도 없음', a
   assert.equal((await postSample(base)).status, 201);
   assert.equal(await repo.count(), 2);
   assert.ok((await repo.getById(data.id)).rawText.length > 0);
+});
+
+test('요청 제한: IP당 OCR 처리 횟수 초과 시 429, 헬스체크는 제한 없음', async () => {
+  const { base } = await start(DEMO, { rateLimit: { windowMs: 60_000, apiMax: 100, ocrMax: 2 } });
+  assert.equal((await postSample(base)).status, 201);
+  assert.equal((await postSample(base)).status, 201);
+  const res = await postSample(base);
+  assert.equal(res.status, 429);
+  assert.equal((await res.json()).error.code, 'RATE_LIMITED');
+  assert.ok(Number(res.headers.get('retry-after')) > 0);
+  // OCR 제한에 걸려도 조회는 된다
+  assert.equal((await fetch(`${base}/receipts`)).status, 200);
+});
+
+test('요청 제한: API 전체 횟수, trust proxy 면 X-Forwarded-For 의 IP별로 따로 센다', async () => {
+  const { base } = await start(DEMO, { rateLimit: { windowMs: 60_000, apiMax: 2, ocrMax: 0 }, trustProxy: 1 });
+  const get = (ip) => fetch(`${base}/receipts`, { headers: { 'X-Forwarded-For': ip } });
+  assert.equal((await get('203.0.113.1')).status, 200);
+  assert.equal((await get('203.0.113.1')).status, 200);
+  assert.equal((await get('203.0.113.1')).status, 429);
+  assert.equal((await get('203.0.113.2')).status, 200);
+  for (let i = 0; i < 5; i++) assert.equal((await fetch(`${base}/health`)).status, 200);
+});
+
+test('createRateLimiter: 창이 지나면 다시 허용, max=0이면 끔', () => {
+  let t = 0;
+  const limiter = createRateLimiter({ windowMs: 1000, max: 1, now: () => t });
+  const run = (lim) => {
+    let err;
+    lim({ ip: '1.1.1.1' }, { set() {} }, (e) => (err = e));
+    return err?.status ?? 'ok';
+  };
+  assert.equal(run(limiter), 'ok');
+  assert.equal(run(limiter), 429);
+  t = 1000;
+  assert.equal(run(limiter), 'ok');
+  const off = createRateLimiter({ windowMs: 1000, max: 0 });
+  for (let i = 0; i < 3; i++) assert.equal(run(off), 'ok');
 });
