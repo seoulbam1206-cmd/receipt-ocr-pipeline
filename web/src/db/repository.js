@@ -103,7 +103,15 @@ const insertSql = (row) => {
  */
 export function createRepository(db, { docType = 'receipt' } = {}) {
   if (!DOC_FIELDS[docType]) throw new Error(`알 수 없는 문서 종류: ${docType}`);
-  const pool = mysql.createPool({ ...connectionOptions(db), connectionLimit: db.connectionLimit, waitForConnections: true });
+  const pool = mysql.createPool({
+    ...connectionOptions(db),
+    connectionLimit: db.connectionLimit,
+    waitForConnections: true,
+    // 무료 서버가 오래 잠들었다 깨면 끊긴 연결을 다시 쓰지 않도록: TCP keepalive + 쉬는 연결은 1분 뒤 닫는다
+    enableKeepAlive: true,
+    maxIdle: 1,
+    idleTimeout: 60_000,
+  });
   // 풀이 새 연결을 만들 때마다 세션 시간대를 맞춘다. 콜백 API 연결이고, 같은 연결의 명령은 순서대로 실행된다
   pool.pool.on('connection', (conn) =>
     conn.query('SET time_zone = ?', [db.timeZone], (err) => err && console.error(`[db] time_zone 설정 실패: ${err.message}`)),
@@ -181,6 +189,21 @@ export function createRepository(db, { docType = 'receipt' } = {}) {
         [docType, hash, excludeId],
       );
       return rows.length > 0;
+    },
+    /** documents 전체 행 수(문서 종류 무관). 데모 저장 한도 확인용 */
+    async count() {
+      const [[{ n }]] = await pool.query('SELECT COUNT(*) AS n FROM documents');
+      return Number(n);
+    },
+    /** 이 종류의 최근 keep건(id 기준)만 남기고 삭제. 반환: 삭제한 행 수 */
+    async pruneKeepLatest(keep) {
+      const [rows] = await pool.query('SELECT id FROM documents WHERE doc_type = ? ORDER BY id DESC LIMIT 1 OFFSET ?', [
+        docType,
+        keep - 1,
+      ]);
+      if (!rows.length) return 0;
+      const [info] = await pool.query('DELETE FROM documents WHERE doc_type = ? AND id < ?', [docType, rows[0].id]);
+      return info.affectedRows;
     },
     async close() {
       await pool.end();

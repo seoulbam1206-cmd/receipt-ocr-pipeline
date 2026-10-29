@@ -145,4 +145,11 @@ describe('MySQL 저장소 (npm run test:db)', { skip: RUN_DB ? false : 'npm run 
   test('getById: 없는 id는 null', async () => {
     assert.equal(await repo.getById(0), null);
   });
+
+  test('count / pruneKeepLatest: 쿼리 동작 (공유 DB라 실제 삭제는 일어나지 않게 큰 값으로)', async () => {
+    const [[{ n }]] = await raw.query('SELECT COUNT(*) AS n FROM documents');
+    assert.equal(await repo.count(), Number(n));
+    assert.equal(await repo.pruneKeepLatest(1_000_000_000), 0);
+    assert.equal(await repo.count(), Number(n));
+  });
 });

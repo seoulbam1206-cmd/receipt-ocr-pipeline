@@ -23,6 +23,7 @@ let records = []; // 처리 내역
 let shownId = null; // 결과 영역에 표시 중인 영수증 id
 let previewUrl = null;
 let busy = false;
+let demoMode = false; // /api/config 로 받는다
 
 async function api(url, opts) {
   const res = await fetch(url, opts);
@@ -56,18 +57,34 @@ function checkFile(file) {
   return null;
 }
 
-async function processFile(file, label = file.name) {
+function processFile(file, label = file.name) {
   if (busy) return;
   const invalid = checkFile(file);
   if (invalid) return toast(invalid, true);
+  if (previewUrl) URL.revokeObjectURL(previewUrl);
+  // 원본은 브라우저 안에서만 미리 보기 (서버는 처리 후 원본을 삭제)
+  previewUrl = URL.createObjectURL(file);
+  const fd = new FormData();
+  fd.append('image', file, file.name);
+  return runOcr(() => api('/api/receipts', { method: 'POST', body: fd }), previewUrl, label);
+}
 
+/** 서버에 있는 샘플 이미지를 처리 (업로드가 꺼진 데모에서도 동작) */
+function processSample(s) {
+  if (busy) return;
+  return runOcr(
+    () => api('/api/receipts/samples/' + encodeURIComponent(s.file), { method: 'POST' }),
+    'samples/' + s.file,
+    `샘플 · ${s.name} (${s.file})`,
+  );
+}
+
+async function runOcr(request, previewSrc, label) {
   setBusy(true);
-  showPreview(file, label);
+  showPreview(previewSrc, label);
   const stop = renderLoading();
   try {
-    const fd = new FormData();
-    fd.append('image', file, file.name);
-    const r = await api('/api/receipts', { method: 'POST', body: fd });
+    const r = await request();
     stop();
     shownId = r.id;
     renderResult(r);
@@ -81,11 +98,8 @@ async function processFile(file, label = file.name) {
   }
 }
 
-function showPreview(file, label) {
-  if (previewUrl) URL.revokeObjectURL(previewUrl);
-  // 원본은 브라우저 안에서만 미리 보기 (서버는 처리 후 원본을 삭제)
-  previewUrl = URL.createObjectURL(file);
-  $('#preview').src = previewUrl;
+function showPreview(src, label) {
+  $('#preview').src = src;
   $('#result-file').textContent = label;
   $('#result').hidden = false;
   $('#result').scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -97,7 +111,9 @@ function renderLoading() {
     <div class="loading">
       <div class="spinner" aria-hidden="true"></div>
       <div class="loading-title">OCR 처리 중… <span class="loading-time" id="elapsed">0.0초</span></div>
-      <div class="loading-sub">전처리 → OCR → 필드 추출 → 검증 순서로 처리합니다. PaddleOCR 엔진은 건당 5초 정도 걸립니다.</div>
+      <div class="loading-sub">전처리 → OCR → 필드 추출 → 검증 순서로 처리합니다. PaddleOCR 엔진은 건당 5초 정도 걸립니다.${
+        demoMode ? ' 무료 서버라 다른 사람이 처리 중이면 조금 더 기다릴 수 있습니다.' : ''
+      }</div>
     </div>`;
   const start = performance.now();
   const timer = setInterval(() => {
@@ -166,7 +182,7 @@ function renderResult(r) {
       </button>
     </div>
 
-    <details class="raw"><summary>OCR 원문 보기 (카드번호 마스킹됨)</summary><pre>${esc(r.rawText || '')}</pre></details>`;
+    <details class="raw"><summary>OCR 원문 보기 (카드번호 마스킹됨${demoMode ? ' · 데모에서는 저장하지 않음' : ''})</summary><pre>${esc(r.rawText || '')}</pre></details>`;
 }
 
 // ── 처리 내역 ───────────────────────────────────────────
@@ -222,7 +238,7 @@ async function openEdit(id) {
   $('#e-id').textContent = r.id;
   for (const k of ['merchant', 'bizNo', 'date', 'category', 'supplyAmount', 'vat', 'totalAmount']) f[k].value = r[k] ?? '';
   $('#e-issues').innerHTML = r.issues.length ? issueItems(r.issues) : '';
-  $('#e-raw').textContent = r.rawText || '';
+  $('#e-raw').textContent = r.rawText || (demoMode ? '(데모 모드에서는 OCR 원문을 저장하지 않습니다)' : '');
   $('#edit').showModal();
 }
 
@@ -271,15 +287,7 @@ $('#samples').innerHTML = SAMPLES.map(
 $('#samples').addEventListener('click', async (ev) => {
   const btn = ev.target.closest('[data-sample]');
   if (!btn || busy) return;
-  const s = SAMPLES.find((x) => x.file === btn.dataset.sample);
-  try {
-    const res = await fetch('samples/' + s.file);
-    if (!res.ok) throw new Error(`샘플을 불러오지 못했습니다 (HTTP ${res.status})`);
-    const blob = await res.blob();
-    await processFile(new File([blob], s.file, { type: blob.type }), `샘플 · ${s.name} (${s.file})`);
-  } catch (e) {
-    toast(e.message, true);
-  }
+  await processSample(SAMPLES.find((x) => x.file === btn.dataset.sample));
 });
 
 $('#file').addEventListener('change', (ev) => {
@@ -315,5 +323,18 @@ $('#btn-csv').addEventListener('click', () => {
   p.delete('status');
   location.href = '/api/receipts/export.csv?' + p;
 });
+
+// 데모 설정: 업로드가 꺼져 있으면 업로드 영역을 숨기고 샘플만 보여 준다
+api('/api/config')
+  .then((c) => {
+    demoMode = c.demoMode;
+    if (!c.uploadEnabled) {
+      $('#dropzone').hidden = true;
+      $('#upload-off').hidden = false;
+      $('#upload-title').textContent = '샘플로 테스트';
+      $('#upload-hint').textContent = '가상 영수증 5장';
+    }
+  })
+  .catch(() => {});
 
 loadRecords();

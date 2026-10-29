@@ -52,6 +52,17 @@ export function createMemoryRepository({ docType = 'receipt' } = {}) {
     async hasDupHash(hash, excludeId = 0) {
       return Boolean(hash && rows.some((r) => r.doc_type === docType && r.dup_hash === hash && r.id !== excludeId));
     },
+    async count() {
+      return rows.length;
+    },
+    async pruneKeepLatest(keep) {
+      const ids = rows.filter((r) => r.doc_type === docType).map((r) => r.id).sort((a, b) => b - a);
+      if (ids.length <= keep) return 0;
+      const cutoff = ids[keep - 1];
+      const before = rows.length;
+      for (let i = rows.length - 1; i >= 0; i--) if (rows[i].doc_type === docType && rows[i].id < cutoff) rows.splice(i, 1);
+      return before - rows.length;
+    },
     async close() {},
   };
 }

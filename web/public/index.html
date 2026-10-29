@@ -41,8 +41,12 @@
   <section class="card" aria-labelledby="upload-title">
     <div class="card-head">
       <h2 id="upload-title">영수증 올리기</h2>
-      <span class="hint">jpg · png · webp, 5MB 이하</span>
+      <span class="hint" id="upload-hint">jpg · png · webp, 5MB 이하</span>
     </div>
+
+    <p class="notice" role="note"><strong>가짜 샘플만 사용하세요.</strong> 실제 영수증이나 카드번호·개인정보가 담긴 이미지는 올리지 마세요.</p>
+
+    <p class="upload-off" id="upload-off" hidden>공개 데모에서는 파일 업로드가 꺼져 있습니다. 아래 샘플을 눌러 테스트하세요.</p>
 
     <label class="dropzone" id="dropzone">
       <input type="file" id="file" accept=".jpg,.jpeg,.png,.webp" class="sr-only">

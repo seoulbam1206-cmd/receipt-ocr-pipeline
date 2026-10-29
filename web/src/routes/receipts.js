@@ -1,4 +1,4 @@
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readdirSync } from 'node:fs';
 import { unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -58,11 +58,30 @@ const parse = (schema, value) => {
 /** 응답에서 내부용 필드 제외 */
 const publicView = ({ dupHash, ...rest }) => rest;
 
+/** 샘플 폴더의 이미지 파일명 목록 (이 이름만 처리하므로 경로 조작은 통하지 않는다) */
+const listSamples = (dir) => {
+  try {
+    return readdirSync(dir).filter((f) => config.upload.allowedExt.includes(path.extname(f).slice(1).toLowerCase()));
+  } catch {
+    return [];
+  }
+};
+
 /**
- * @param {{ repo: object, ocr: object, uploadDir?: string, now?: () => Date }} deps
+ * @param {{ repo: object, ocr: object, uploadDir?: string, now?: () => Date,
+ *   demo?: typeof config.demo, samplesDir?: string, ocrLimiter?: import('express').RequestHandler }} deps
  */
-export function createReceiptsRouter({ repo, ocr, uploadDir = config.upload.dir, now = () => new Date() }) {
+export function createReceiptsRouter({
+  repo,
+  ocr,
+  uploadDir = config.upload.dir,
+  now = () => new Date(),
+  demo = config.demo,
+  samplesDir = config.publicSamplesDir,
+  ocrLimiter = (req, res, next) => next(),
+}) {
   mkdirSync(uploadDir, { recursive: true });
+  const samples = new Set(listSamples(samplesDir));
   const upload = multer({
     storage: multer.diskStorage({
       destination: uploadDir,
@@ -80,24 +99,53 @@ export function createReceiptsRouter({ repo, ocr, uploadDir = config.upload.dir,
 
   const router = Router();
 
-  router.post('/', upload.single('image'), async (req, res) => {
+  /** 데모 저장 한도(문서 전체 행 수). OCR 전에 확인해 헛된 처리를 막는다 */
+  const checkStorage = async () => {
+    if (demo.enabled && demo.maxRows > 0 && (await repo.count()) >= demo.maxRows) {
+      throw new ApiError(409, 'DEMO_STORAGE_FULL', '데모 저장 한도에 도달했습니다');
+    }
+  };
+
+  /** OCR → 저장 → 응답. 데모 모드면 원문은 응답에만 담고 저장하지 않으며, 최근 keepLatest건만 남긴다 */
+  const processImage = async (imagePath, res) => {
+    let result;
+    try {
+      result = await analyzeReceipt(imagePath, { ocr, repo, now: now() });
+    } catch (err) {
+      if (err.code === 'INVALID_IMAGE') {
+        throw new ApiError(422, 'INVALID_IMAGE', '이미지를 해석할 수 없습니다');
+      }
+      throw err;
+    }
+    const saved = await repo.insert(demo.enabled ? { ...result, rawText: null } : result);
+    if (demo.enabled && demo.keepLatest > 0) await repo.pruneKeepLatest(demo.keepLatest);
+    res.status(201).json({ data: publicView({ ...saved, rawText: result.rawText, valid: result.valid }) });
+  };
+
+  const uploadGuard = (req, res, next) =>
+    demo.upload
+      ? next()
+      : next(new ApiError(403, 'UPLOAD_DISABLED', '데모에서는 파일 업로드가 꺼져 있습니다. 화면의 샘플을 눌러 테스트하세요'));
+
+  router.post('/', uploadGuard, ocrLimiter, async (req, res, next) => {
+    await checkStorage();
+    next();
+  }, upload.single('image'), async (req, res) => {
     if (!req.file) throw new ApiError(400, 'FILE_REQUIRED', "multipart 필드 'image'로 이미지를 첨부하세요");
     try {
-      let result;
-      try {
-        result = await analyzeReceipt(req.file.path, { ocr, repo, now: now() });
-      } catch (err) {
-        if (err.code === 'INVALID_IMAGE') {
-          throw new ApiError(422, 'INVALID_IMAGE', '이미지를 해석할 수 없습니다');
-        }
-        throw err;
-      }
-      const saved = await repo.insert(result);
-      res.status(201).json({ data: publicView({ ...saved, valid: result.valid }) });
+      await processImage(req.file.path, res);
     } finally {
       // 원본 영수증은 처리 직후 삭제
       await unlink(req.file.path).catch(() => {});
     }
+  });
+
+  // 화면의 샘플 이미지(서버에 있는 가상 영수증)를 처리. 업로드가 꺼진 데모에서도 동작한다
+  router.post('/samples/:name', ocrLimiter, async (req, res) => {
+    const name = req.params.name;
+    if (!samples.has(name)) throw new ApiError(404, 'SAMPLE_NOT_FOUND', `샘플 ${name}을(를) 찾을 수 없습니다`);
+    await checkStorage();
+    await processImage(path.join(samplesDir, name), res);
   });
 
   router.get('/', async (req, res) => {
