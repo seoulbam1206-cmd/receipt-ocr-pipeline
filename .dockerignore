@@ -1,0 +1,15 @@
+# Dockerfile은 필요한 폴더만 COPY 하지만, 빌드 컨텍스트에서도 무거운·비밀 파일은 뺀다
+.git
+**/node_modules
+**/.venv
+**/.paddlex
+**/__pycache__
+**/.pytest_cache
+**/.env
+**/.env.*
+!**/.env.example
+web/uploads
+web/tessdata/*.traineddata
+docs
+samples
+*.log
